@@ -73,6 +73,15 @@ pub async fn init_db(path: &str) -> SqlitePool {
         )"
     ).execute(&pool).await.unwrap();
 
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS virtual_topups (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp       TEXT NOT NULL,
+            amount_added    REAL NOT NULL,
+            balance_after   REAL NOT NULL
+        )"
+    ).execute(&pool).await.unwrap();
+
     pool
 }
 
@@ -210,5 +219,17 @@ pub async fn insert_window_stats(
     .bind(win_rate_30)
     .bind(avg_velocity)
     .bind(market_mode)
+    .execute(pool).await.unwrap();
+}
+
+pub async fn insert_virtual_topup(pool: &SqlitePool, amount_added: f64, balance_after: f64) {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO virtual_topups (timestamp, amount_added, balance_after)
+         VALUES (?, ?, ?)"
+    )
+    .bind(now)
+    .bind(amount_added)
+    .bind(balance_after)
     .execute(pool).await.unwrap();
 }

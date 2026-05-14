@@ -4,7 +4,7 @@ use crate::storage::db::{self, TradeRecord};
 use crate::telegram::{TelegramNotifier, TradeResult};
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 use std::collections::{HashMap, VecDeque};
 use chrono::{DateTime, Utc, Timelike};
 use std::time::Instant;
@@ -96,12 +96,16 @@ impl SimulationEngine {
         }
 
         if s.virtual_balance < MIN_VIRTUAL_BALANCE {
-            error!("Modal virtual kritis: {:.3} SOL", s.virtual_balance);
-            s.is_running = false;
+            info!("🔄 Auto-Topup: Saldo virtual {:.3} SOL menipis. Menambah 1.0 SOL.", s.virtual_balance);
+            let topup_amount = 1.0;
+            s.virtual_balance += topup_amount;
+            
+            // Catat ke database
+            db::insert_virtual_topup(&self.db, topup_amount, s.virtual_balance).await;
+
             if let Some(notifier) = &self.notifier {
-                notifier.send_generic_alert(format!("⚠️ *MODAL KRITIS*: {:.3} SOL — bot pause otomatis.", s.virtual_balance)).await;
+                notifier.send_generic_alert(format!("⚠️ *AUTO-TOPUP*: Saldo virtual menipis. Menambahkan 1.0 SOL. Saldo baru: {:.3} SOL", s.virtual_balance)).await;
             }
-            return;
         }
 
         s.virtual_balance -= 0.1;

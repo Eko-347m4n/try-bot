@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
-use chrono::{Utc, Timelike};
+use chrono::Utc;
 
 #[derive(Debug)]
 struct TokenActivity {
@@ -259,14 +259,6 @@ impl FilterEngine {
     }
 
     async fn handle_token_matured(&mut self, token: TokenData) {
-        // Filter awal berdasarkan waktu yang menguntungkan dari data historis
-        if !is_profitable_hour() {
-            info!("❌ {} Ditolak: Di luar jam perdagangan yang menguntungkan.", token.symbol);
-            self.state.lock().await.rejected_schedule += 1; // CATATAN: rejected_schedule perlu ditambahkan ke struct State di state.rs
-            self.activity_monitor.remove(&token.address);
-            return;
-        }
-
         let activity_data = {
             let activity = self.activity_monitor.get(&token.address);
             if activity.is_none() {
@@ -517,12 +509,4 @@ impl FilterEngine {
         info!("📊 Window Stats: Scanned={}, Passed={}, Mode={}, Regime={}", window_scanned, window_passed, mode, regime_str);
         info!("📈 Total Session: Scanned={}, Passed={}", total_scanned, total_passed);
     }
-}
-
-// Fungsi untuk memeriksa apakah jam saat ini adalah jam yang menguntungkan
-fn is_profitable_hour() -> bool {
-    let hour = chrono::Utc::now().hour();
-    // Jam yang terbukti di atas breakeven dari data historis:
-    // 14, 16, 17, 19, 20, 23 UTC
-    matches!(hour, 14 | 16 | 17 | 19 | 20 | 23)
 }
