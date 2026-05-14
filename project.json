@@ -1,0 +1,213 @@
+{
+  "project_name": "pumpfun-quant-bot",
+  "architecture": {
+    "type": "event-driven",
+    "mode": "paper-trading-first",
+    "description": "Scan Pump.fun tokens, filter by parameters, simulate buy/sell, track performance"
+  },
+  "components": {
+    "stream_listener": {
+      "description": "Listen websocket Pump.fun untuk token baru dan trade",
+      "responsibility": [
+        "connect websocket",
+        "receive new token",
+        "receive trade events",
+        "push ke event queue"
+      ]
+    },
+    "event_queue": {
+      "description": "Queue event agar sistem tidak overload",
+      "responsibility": [
+        "buffer incoming events",
+        "dispatch ke filter engine"
+      ]
+    },
+    "filter_engine": {
+      "description": "Filter token berdasarkan parameter",
+      "responsibility": [
+        "check volume spike",
+        "check holder growth",
+        "check liquidity",
+        "check whale distribution",
+        "check dev wallet"
+      ]
+    },
+    "simulation_engine": {
+      "description": "Simulasi buy/sell virtual",
+      "responsibility": [
+        "virtual buy",
+        "virtual sell",
+        "track profit loss"
+      ]
+    },
+    "price_tracker": {
+      "description": "Track harga token realtime",
+      "responsibility": [
+        "subscribe token price",
+        "update trade price",
+        "trigger TP/SL"
+      ]
+    },
+    "risk_manager": {
+      "description": "Manajemen risiko",
+      "responsibility": [
+        "stop loss",
+        "take profit",
+        "position size"
+      ]
+    },
+    "wallet_simulator": {
+      "description": "Simulasi multi wallet",
+      "responsibility": [
+        "simulate wallet balance",
+        "simulate trade"
+      ]
+    },
+    "logger": {
+      "description": "Logging semua aktivitas",
+      "responsibility": [
+        "trade logs",
+        "error logs",
+        "performance logs"
+      ]
+    },
+    "analytics": {
+      "description": "Analisis performa bot",
+      "responsibility": [
+        "win rate",
+        "drawdown",
+        "profit"
+      ]
+    }
+  },
+  "folder_structure": {
+    "root": {
+      "src": {
+        "stream": {
+          "pumpfun_listener.js": "listen websocket pumpfun",
+          "dex_listener.js": "listen dex trade"
+        },
+        "engine": {
+          "filter_engine.js": "filter token parameter",
+          "simulation_engine.js": "simulate buy sell",
+          "risk_engine.js": "risk management"
+        },
+        "tracker": {
+          "price_tracker.js": "track price realtime",
+          "holder_tracker.js": "track holder growth",
+          "volume_tracker.js": "track volume spike"
+        },
+        "wallet": {
+          "wallet_simulator.js": "simulate wallet",
+          "multi_wallet.js": "multi wallet manager"
+        },
+        "utils": {
+          "logger.js": "logging",
+          "queue.js": "event queue",
+          "time.js": "time helper"
+        },
+        "config": {
+          "config.json": "parameter config",
+          "strategy.json": "strategy config"
+        },
+        "analytics": {
+          "performance.js": "calculate performance",
+          "stats.js": "statistics"
+        }
+      },
+      "logs": {
+        "trades": "trade logs",
+        "errors": "error logs",
+        "performance": "performance logs"
+      },
+      "data": {
+        "tokens": "token cache",
+        "trades": "trade history"
+      }
+    }
+  },
+  "sequence_diagram": {
+    "flow": [
+      {
+        "step": 1,
+        "actor": "stream_listener",
+        "action": "receive new token"
+      },
+      {
+        "step": 2,
+        "actor": "stream_listener",
+        "action": "send to event queue"
+      },
+      {
+        "step": 3,
+        "actor": "event_queue",
+        "action": "dispatch to filter_engine"
+      },
+      {
+        "step": 4,
+        "actor": "filter_engine",
+        "action": "check parameters"
+      },
+      {
+        "step": 5,
+        "actor": "filter_engine",
+        "action": "pass to simulation_engine if valid"
+      },
+      {
+        "step": 6,
+        "actor": "simulation_engine",
+        "action": "virtual buy"
+      },
+      {
+        "step": 7,
+        "actor": "price_tracker",
+        "action": "track price realtime"
+      },
+      {
+        "step": 8,
+        "actor": "risk_manager",
+        "action": "trigger TP or SL"
+      },
+      {
+        "step": 9,
+        "actor": "simulation_engine",
+        "action": "virtual sell"
+      },
+      {
+        "step": 10,
+        "actor": "analytics",
+        "action": "calculate performance"
+      },
+      {
+        "step": 11,
+        "actor": "logger",
+        "action": "save logs"
+      }
+    ]
+  },
+  "strategy_parameters": {
+    "token_age_seconds": {
+      "min": 30,
+      "max": 180
+    },
+    "volume": {
+      "30s": 5,
+      "60s": 10
+    },
+    "holder_growth": {
+      "min_holder": 50,
+      "growth_per_30s": 20
+    },
+    "liquidity": {
+      "min": 8
+    },
+    "distribution": {
+      "max_top_holder": 15,
+      "max_top5": 60
+    },
+    "risk": {
+      "entry_size": 0.1,
+      "take_profit": 25,
+      "stop_loss": 12
+    }
+}

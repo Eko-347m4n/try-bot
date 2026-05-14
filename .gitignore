@@ -1,0 +1,36 @@
+# Rust
+/target/
+# Cargo.lock is committed for applications to ensure reproducible builds
+# Cargo.lock
+
+# Database
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Data & Logs
+/logs/
+/data/
+
+# Environment Variables (Secrets)
+.env
+.env.*
+!.env.example
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+.history/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Build artifacts
+*.o
+*.a
+*.so
