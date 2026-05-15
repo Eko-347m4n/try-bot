@@ -67,9 +67,11 @@ impl DynamicConfig {
             return Self::pause("Market regime: Cold");
         }
 
-        // 2. Unknown -> Konservatif (Strict)
+        // 2. Unknown -> Gunakan Mode Normal agar tidak terjebak dalam vicious cycle
         if context.regime == MarketRegime::Unknown {
-            return Self::strict("Insufficient market data");
+            let mut cfg = Self::normal();
+            cfg.reason = "Insufficient market data (Using Normal mode)".into();
+            return cfg;
         }
 
         // 3. Kombinasi Regime + WR

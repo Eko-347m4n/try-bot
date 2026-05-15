@@ -271,6 +271,18 @@ impl FilterEngine {
 
         let (holder_count, vol, latest_price, half_volume, buy_vol, sell_vol) = activity_data;
         
+        // 0. Update Market Context (SEBELUM FILTER)
+        // Kita hitung metrik untuk "belajar" dari market, terlepas dari apakah kita akan trade token ini.
+        let momentum_pct = ((latest_price / token.initial_price) - 1.0) * 100.0;
+        let early_volume = half_volume.unwrap_or(0.0);
+        let velocity = vol - early_volume;
+
+        {
+            let mut s = self.state.lock().await;
+            s.market_ctx.add_velocity(velocity);
+            s.market_ctx.add_momentum_result(momentum_pct >= 3.0);
+        }
+
         // AMBIL NILAI KONFIGURASI DULU, LALU LEPAS LOCK
         let (v_thresh, vol_thresh, buyers_thresh, is_paused, cfg_reason, cfg_mode) = {
             let cfg = self.config.read().await;
@@ -293,18 +305,7 @@ impl FilterEngine {
             return;
         }
 
-        // 3. Price Momentum Check
-        let momentum_pct = ((latest_price / token.initial_price) - 1.0) * 100.0;
-        let early_volume = half_volume.unwrap_or(0.0);
-        let velocity = vol - early_volume;
-
-        {
-            // LOCK STATE SEKARANG AMAN KARENA LOCK CONFIG SUDAH DILEPAS
-            let mut s = self.state.lock().await;
-            s.market_ctx.add_velocity(velocity);
-            s.market_ctx.add_momentum_result(momentum_pct >= 3.0);
-        }
-
+        // 3. Price Momentum Check (Evaluasi Trading)
         if momentum_pct < 3.0 {
             info!("❌ {} Ditolak: Momentum Lemah ({:.2}%)", token.symbol, momentum_pct);
             self.state.lock().await.rejected_momentum += 1;
