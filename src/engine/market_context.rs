@@ -95,7 +95,7 @@ impl MarketContext {
 
     fn update_regime(&mut self) {
         // Butuh minimal data sebelum bisa menilai secara akurat
-        if self.token_births.len() < 15 || self.momentum_results.len() < 10 {
+        if self.token_births.len() < 5 || self.momentum_results.len() < 2 {
             self.regime = MarketRegime::Unknown;
             return;
         }

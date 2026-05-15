@@ -263,6 +263,9 @@ impl FilterEngine {
             let activity = self.activity_monitor.get(&token.address);
             if activity.is_none() {
                 warn!("⚠️ Monitor data hilang untuk {}", token.symbol);
+                // Tambahkan ke metrik penolakan agar tidak ada gap statistik
+                let mut s = self.state.lock().await;
+                s.rejected_volume += 1; // Anggap gagal volume karena tidak ada data
                 return;
             }
             let a = activity.unwrap();
@@ -356,7 +359,7 @@ impl FilterEngine {
             MarketMode::Hot     => 65.0,
             MarketMode::Normal  => 72.0,
             MarketMode::Strict  => 80.0,
-            MarketMode::Pause   => 999.0,
+            MarketMode::Pause   => 88.0,
         };
 
         if score.total < min_score {

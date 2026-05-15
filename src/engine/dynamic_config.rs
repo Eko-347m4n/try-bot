@@ -54,9 +54,9 @@ impl DynamicConfig {
     pub fn pause(reason: &str) -> Self {
         Self {
             mode: MarketMode::Pause,
-            velocity_thresh: 2.0,
-            volume_thresh: 8.0,
-            buyers_thresh: 15,
+            velocity_thresh: 1.5,
+            volume_thresh: 5.0,
+            buyers_thresh: 12,
             reason: format!("PAUSE: {}", reason),
         }
     }
@@ -67,10 +67,10 @@ impl DynamicConfig {
             return Self::pause("Market regime: Cold");
         }
 
-        // 2. Unknown -> Gunakan Mode Normal agar tidak terjebak dalam vicious cycle
+        // 2. Unknown -> Gunakan Mode Relaxed agar tidak terjebak dalam vicious cycle
         if context.regime == MarketRegime::Unknown {
-            let mut cfg = Self::normal();
-            cfg.reason = "Insufficient market data (Using Normal mode)".into();
+            let mut cfg = Self::normal_relaxed();
+            cfg.reason = "Insufficient market data (Using Relaxed mode)".into();
             return cfg;
         }
 
