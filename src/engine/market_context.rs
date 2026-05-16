@@ -94,19 +94,22 @@ impl MarketContext {
     }
 
     fn update_regime(&mut self) {
-        // Butuh minimal data sebelum bisa menilai secara akurat
-        if self.token_births.len() < 5 || self.momentum_results.len() < 2 {
+        // FIX 3: Safeguard & Mechanism Reset
+        // Butuh minimal data sebelum bisa menilai secara akurat. 
+        // Jika data sangat sedikit, gunakan Unknown (yang akan men-trigger Normal_Relaxed di config)
+        if self.token_births.len() < 10 || self.momentum_results.len() < 5 {
             self.regime = MarketRegime::Unknown;
             return;
         }
 
         let mut score: i32 = 0;
+        let mut data_points = 0;
 
         // Birth rate scoring
         match self.birth_rate_5m {
             r if r > 40.0 => score += 2,
             r if r > 20.0 => score += 1,
-            r if r > 10.0 => score += 0,
+            r if r > 5.0  => { score += 0; data_points += 1; },
             _             => score -= 2,
         }
 
@@ -114,15 +117,15 @@ impl MarketContext {
         match self.global_velocity {
             v if v > 1.2 => score += 2,
             v if v > 0.7 => score += 1,
-            v if v > 0.4 => score += 0,
+            v if v > 0.3 => { score += 0; data_points += 1; },
             _            => score -= 2,
         }
 
         // Momentum fail rate scoring
         match self.momentum_fail_rate {
-            r if r < 0.4 => score += 2,
-            r if r < 0.6 => score += 0,
-            r if r < 0.8 => score -= 1,
+            r if r < 0.3 => score += 2,
+            r if r < 0.5 => score += 1,
+            r if r < 0.7 => { score -= 1; data_points += 1; },
             _            => score -= 3,
         }
 
@@ -136,10 +139,11 @@ impl MarketContext {
             }
         }
 
+        // Final Regime Decision dengan bantalan (padding)
         self.regime = match score {
-            s if s >= 5  => MarketRegime::Hot,
-            s if s >= 2  => MarketRegime::Normal,
-            s if s >= 0  => MarketRegime::Cooling,
+            s if s >= 4  => MarketRegime::Hot,
+            s if s >= 1  => MarketRegime::Normal,
+            s if s >= -1 => MarketRegime::Cooling,
             _            => MarketRegime::Cold,
         };
     }

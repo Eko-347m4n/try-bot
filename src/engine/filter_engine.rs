@@ -499,11 +499,13 @@ impl FilterEngine {
         let window_passed_rate = if window_scanned > 0 { window_passed as f64 / window_scanned as f64 } else { 0.0 };
         let win_rate_30 = db::query_win_rate_last_n(&self.db, 30).await;
         
-        let avg_velocity = if !self.last_velocities.is_empty() {
-            self.last_velocities.iter().sum::<f64>() / self.last_velocities.len() as f64
-        } else {
-            0.0
-        };
+        // FIX 2: Gunakan Global Velocity dari MarketContext, bukan last_velocities yang cacat
+        let avg_velocity = current_ctx.global_velocity;
+
+        // SAFEGUARD: Detect possible velocity bug (Perketat threshold: 10 scanned)
+        if window_scanned > 10 && avg_velocity == 0.0 {
+            warn!("🚨 ALERT: Velocity data missing early in window (Scanned: {}, Vel: 0.0)", window_scanned);
+        }
 
         let mode = format!("{:?}", self.config.read().await.mode);
 
@@ -517,7 +519,9 @@ impl FilterEngine {
             &mode
         ).await;
         
-        info!("📊 Window Stats: Scanned={}, Passed={}, Mode={}, Regime={}", window_scanned, window_passed, mode, regime_str);
+        info!("📊 Window Stats: Scanned={}, Passed={}, Mode={}, Regime={}, GlobalVel={:.2}", 
+            window_scanned, window_passed, mode, regime_str, avg_velocity);
+
         info!("📈 Total Session: Scanned={}, Passed={}", total_scanned, total_passed);
     }
 }

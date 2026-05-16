@@ -67,10 +67,10 @@ impl DynamicConfig {
             return Self::pause("Market regime: Cold");
         }
 
-        // 2. Unknown -> Gunakan Mode Relaxed agar tidak terjebak dalam vicious cycle
+        // 2. Unknown -> Gunakan Mode Strict (Konservatif) saat data minim
         if context.regime == MarketRegime::Unknown {
-            let mut cfg = Self::normal_relaxed();
-            cfg.reason = "Insufficient market data (Using Relaxed mode)".into();
+            let mut cfg = Self::strict("Insufficient market data");
+            cfg.reason = "Data minim (Using Strict mode for safety)".into();
             return cfg;
         }
 
