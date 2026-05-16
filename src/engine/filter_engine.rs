@@ -242,8 +242,8 @@ impl FilterEngine {
         if age < self.params.token_age_seconds.min {
             let delay = self.params.token_age_seconds.min - age;
             let half_delay = delay / 2;
-            info!("🔍 Token {} terdeteksi (Umur {}s). Menunggu aktivitas (Target >3 SOL, >6 Pembeli, {}s)...", 
-                token.symbol, age, delay);
+            info!("🔍 Token {} ({}) terdeteksi (Umur {}s). Menunggu aktivitas (Target >3 SOL, >6 Pembeli, {}s)...", 
+                token.symbol, token.address, age, delay);
 
             let tx_clone = self.tx.clone();
             tokio::spawn(async move {
@@ -293,27 +293,29 @@ impl FilterEngine {
         };
 
         // 1. Filter Volume
+        let mut fail_vol = false;
+        let mut fail_holders = false;
+        let mut fail_mom = false;
+        let mut fail_pump = false;
+        let mut fail_vel = false;
+        let mut fail_press = false;
+        let mut fail_score = false;
+
         if vol < vol_thresh {
             info!("❌ {} Ditolak: Vol {:.2} < {:.2} SOL", token.symbol, vol, vol_thresh);
-            self.state.lock().await.rejected_volume += 1;
-            self.activity_monitor.remove(&token.address);
-            return;
+            fail_vol = true;
         }
 
         // 2. Filter Unique Buyers
         if (holder_count as u32) < buyers_thresh {
             info!("❌ {} Ditolak: Buyers {} < {}", token.symbol, holder_count, buyers_thresh);
-            self.state.lock().await.rejected_holders += 1;
-            self.activity_monitor.remove(&token.address);
-            return;
+            fail_holders = true;
         }
 
         // 3. Price Momentum Check (Evaluasi Trading)
         if momentum_pct < 3.0 {
             info!("❌ {} Ditolak: Momentum Lemah ({:.2}%)", token.symbol, momentum_pct);
-            self.state.lock().await.rejected_momentum += 1;
-            self.activity_monitor.remove(&token.address);
-            return;
+            fail_mom = true;
         }
 
         // 4. Filter Pump-and-Dump (Hold Time Minimum)
@@ -325,17 +327,13 @@ impl FilterEngine {
         // Token pump: early_velocity >> late_velocity (sudah melambat)
         if early_velocity > late_velocity * 1.5 {
             info!("❌ {} Ditolak: Pump-and-Dump terdeteksi (Early Vel: {:.2}, Late Vel: {:.2})", token.symbol, early_velocity, late_velocity);
-            self.state.lock().await.rejected_pump += 1; // CATATAN: rejected_pump perlu ditambahkan ke struct State di state.rs
-            self.activity_monitor.remove(&token.address);
-            return;
+            fail_pump = true;
         }
 
         // 5. Velocity Check (sebelumnya 4)
         if velocity < v_thresh {
             info!("❌ {} Ditolak: Velocity {:.2} < {:.2}", token.symbol, velocity, v_thresh);
-            self.state.lock().await.rejected_velocity += 1;
-            self.activity_monitor.remove(&token.address);
-            return;
+            fail_vel = true;
         }
 
         // 5. Buy/Sell Pressure Check
@@ -344,9 +342,7 @@ impl FilterEngine {
         
         if ratio < 1.2 {
             info!("❌ {} Ditolak: Pressure (Ratio {:.2})", token.symbol, ratio);
-            self.state.lock().await.rejected_pressure += 1;
-            self.activity_monitor.remove(&token.address);
-            return;
+            fail_press = true;
         }
 
         // 6. Confidence Score Check
@@ -372,22 +368,33 @@ impl FilterEngine {
                 score.breakdown.pressure_score,
                 score.breakdown.late_dominance_score,
             );
-            self.state.lock().await.rejected_score += 1;
-            self.activity_monitor.remove(&token.address);
-            return;
+            fail_score = true;
         }
 
         // Hard minimum per komponen (Aksi 4)
         if score.breakdown.velocity_score < 7.0 {
             info!("❌ {} Ditolak: Velocity score terlalu rendah ({:.0})", token.symbol, score.breakdown.velocity_score);
-            self.state.lock().await.rejected_score += 1;
-            self.activity_monitor.remove(&token.address);
-            return;
+            fail_score = true;
         }
 
         if score.breakdown.momentum_score < 3.0 { // Tadi di Aksi 2, momentum >= 5% dapat 3.0. Jadi < 3.0 berarti < 5% momentum.
             info!("❌ {} Ditolak: Momentum score terlalu rendah ({:.0})", token.symbol, score.breakdown.momentum_score);
-            self.state.lock().await.rejected_score += 1;
+            fail_score = true;
+        }
+
+        // UPDATE METRICS (Satu kali lock untuk semua penolakan)
+        {
+            let mut s = self.state.lock().await;
+            if fail_vol     { s.rejected_volume += 1; }
+            if fail_holders { s.rejected_holders += 1; }
+            if fail_mom     { s.rejected_momentum += 1; }
+            if fail_pump    { s.rejected_pump += 1; }
+            if fail_vel     { s.rejected_velocity += 1; }
+            if fail_press   { s.rejected_pressure += 1; }
+            if fail_score   { s.rejected_score += 1; }
+        }
+
+        if fail_vol || fail_holders || fail_mom || fail_pump || fail_vel || fail_press || fail_score {
             self.activity_monitor.remove(&token.address);
             return;
         }

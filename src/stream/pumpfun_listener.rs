@@ -105,42 +105,50 @@ impl PumpfunListener {
         let trader = v.get("traderPublicKey").and_then(|t| t.as_str()).unwrap_or("Unknown").to_string();
         let tx_type = v.get("txType").and_then(|t| t.as_str()).unwrap_or("");
 
-        if let (Some(sol), Some(tokens)) = (v_sol, v_tokens) {
-            let actual_price = sol / tokens;
+        // Hitung harga jika data bonding curve tersedia
+        let actual_price = if let (Some(sol), Some(tokens)) = (v_sol, v_tokens) {
+            if tokens > 0.0 { sol / tokens } else { 0.0 }
+        } else {
+            0.0
+        };
 
-            if tx_type == "buy" || tx_type == "sell" {
-                let _ = self.tx.send(BotEvent::PriceUpdate {
-                    token_address: mint.clone(),
-                    price: actual_price,
-                    volume: sol_amount,
-                    sender: trader,
-                    timestamp: Utc::now(),
-                    is_buy: tx_type == "buy",
-                });
-            } else if tx_type == "create" {
-                if sol > 30.0 {
-                    let _ = tx_ws.send(serde_json::json!({"method":"subscribeTokenTrade","keys":[mint]}).to_string());
-                }
-
-                let token_data = TokenData {
-                    address: mint.clone(),
-                    name: v.get("name").and_then(|n| n.as_str()).unwrap_or("?").to_string(),
-                    symbol: v.get("symbol").and_then(|s| s.as_str()).unwrap_or("?").to_string(),
-                    created_at: Utc::now(),
-                    initial_price: actual_price,
-                };
-                
-                let _ = self.tx.send(BotEvent::PriceUpdate {
-                    token_address: mint.clone(),
-                    price: actual_price,
-                    volume: 0.0,
-                    sender: trader,
-                    timestamp: Utc::now(),
-                    is_buy: true,
-                });
-
-                let _ = self.tx.send(BotEvent::NewToken(token_data));
+        if tx_type == "buy" || tx_type == "sell" {
+            // Log debug untuk memastikan volume masuk
+            if sol_amount > 0.1 {
+                info!("💎 Trade Terdeteksi: {} | {} SOL | {}", mint, sol_amount, tx_type);
             }
+
+            let _ = self.tx.send(BotEvent::PriceUpdate {
+                token_address: mint,
+                price: actual_price,
+                volume: sol_amount,
+                sender: trader,
+                timestamp: Utc::now(),
+                is_buy: tx_type == "buy",
+            });
+        } else if tx_type == "create" {
+            // Selalu subscribe transaksi untuk koin baru agar volume bisa dipantau
+            let _ = tx_ws.send(serde_json::json!({"method":"subscribeTokenTrade","keys":[mint]}).to_string());
+
+            let token_data = TokenData {
+                address: mint.clone(),
+                name: v.get("name").and_then(|n| n.as_str()).unwrap_or("?").to_string(),
+                symbol: v.get("symbol").and_then(|s| s.as_str()).unwrap_or("?").to_string(),
+                created_at: Utc::now(),
+                initial_price: actual_price,
+            };
+            
+            // PENTING: Kirim NewToken DULU baru PriceUpdate
+            let _ = self.tx.send(BotEvent::NewToken(token_data));
+
+            let _ = self.tx.send(BotEvent::PriceUpdate {
+                token_address: mint,
+                price: actual_price,
+                volume: sol_amount,
+                sender: trader,
+                timestamp: Utc::now(),
+                is_buy: true,
+            });
         }
     }
 }
