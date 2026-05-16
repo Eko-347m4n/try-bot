@@ -103,13 +103,12 @@ impl MarketContext {
         }
 
         let mut score: i32 = 0;
-        let mut data_points = 0;
 
         // Birth rate scoring
         match self.birth_rate_5m {
             r if r > 40.0 => score += 2,
             r if r > 20.0 => score += 1,
-            r if r > 5.0  => { score += 0; data_points += 1; },
+            r if r > 5.0  => { score += 0; },
             _             => score -= 2,
         }
 
@@ -117,7 +116,7 @@ impl MarketContext {
         match self.global_velocity {
             v if v > 1.2 => score += 2,
             v if v > 0.7 => score += 1,
-            v if v > 0.3 => { score += 0; data_points += 1; },
+            v if v > 0.3 => { score += 0; },
             _            => score -= 2,
         }
 
@@ -125,7 +124,7 @@ impl MarketContext {
         match self.momentum_fail_rate {
             r if r < 0.3 => score += 2,
             r if r < 0.5 => score += 1,
-            r if r < 0.7 => { score -= 1; data_points += 1; },
+            r if r < 0.7 => { score -= 1; },
             _            => score -= 3,
         }
 
