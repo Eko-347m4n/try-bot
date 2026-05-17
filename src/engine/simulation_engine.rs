@@ -19,6 +19,7 @@ pub struct Position {
     pub velocity_score: f64,
     pub buyers_count: u32,
     pub entry_score: f64,
+    pub entry_size_sol: f64,
 }
 
 pub struct SimulationEngine {
@@ -108,7 +109,20 @@ impl SimulationEngine {
             }
         }
 
-        s.virtual_balance -= 0.1;
+        const BOOTSTRAP_TRADES: u32 = 5;
+        const BOOTSTRAP_MAX_SOL: f64 = 0.05;
+
+        let entry_size = if s.total_trades < BOOTSTRAP_TRADES {
+            BOOTSTRAP_MAX_SOL
+        } else {
+            0.1 // Default entry size
+        };
+
+        if s.total_trades < BOOTSTRAP_TRADES {
+            info!("🚀 BOOTSTRAP BUY ({}): Menggunakan size kecil {:.3} SOL untuk mengumpulkan data.", s.total_trades + 1, entry_size);
+        }
+
+        s.virtual_balance -= entry_size;
         s.active_positions += 1;
         s.total_trades += 1;
         
@@ -138,9 +152,10 @@ impl SimulationEngine {
             velocity_score,
             buyers_count,
             entry_score,
+            entry_size_sol: entry_size,
         };
 
-        info!("🟢 VIRTUAL BUY: {} | Balance: {:.3} SOL", address, s.virtual_balance);
+        info!("🟢 VIRTUAL BUY: {} | Balance: {:.3} SOL | Size: {:.2}", address, s.virtual_balance, entry_size);
         self.open_positions.insert(address, pos);
     }
 
@@ -194,7 +209,7 @@ impl SimulationEngine {
             }
             if self.recent_outcomes.len() > 20 { self.recent_outcomes.pop_front(); }
             
-            let pnl_sol = 0.1 * (1.0 + pnl_percent / 100.0);
+            let pnl_sol = pos.entry_size_sol * (1.0 + pnl_percent / 100.0);
             s.virtual_balance += pnl_sol;
             
             // Sync total_pnl_pct dengan ROI baru

@@ -78,15 +78,28 @@ impl TokenScore {
             _             => 0.0,
         };
 
-        // Momentum — seberapa kuat harga sudah naik
-        let momentum_score = match momentum_pct {
+        // Momentum — seberapa kuat harga sudah naik (Price)
+        // + Bonus untuk "Quiet Accumulation" (Volume Momentum)
+        let mut momentum_score = match momentum_pct {
             m if m >= 20.0 => 15.0,  // sangat kuat
             m if m >= 12.0 => 12.0,
             m if m >= 8.0  => 8.0,
-            m if m >= 5.0  => 3.0,   // turunkan dari 4 ke 3
-            m if m >= 3.0  => 0.0,   // 3% tidak dapat skor — hanya lolos filter minimum
+            m if m >= 3.0  => 3.0,   // price confirmed - konsisten dengan filter min 3%
             _              => 0.0,
         };
+
+        // Quiet Accumulation Check: Jika price belum bergerak, tapi volume akselerasi sangat kuat
+        // Ini adalah kandidat entry terbaik (Early Entry)
+        if momentum_score < 3.0 {
+            let velocity_ratio = if thresh.velocity_thresh > 0.0 { late_volume / thresh.velocity_thresh } else { 1.0 };
+            let late_ratio = if total_volume > 0.0 { late_volume / total_volume } else { 0.0 };
+
+            if velocity_ratio >= 3.0 && late_ratio >= 0.55 {
+                momentum_score = 5.0; // Strong Accumulation: High acceleration + High Late dominance
+            } else if velocity_ratio >= 2.0 && late_ratio >= 0.50 {
+                momentum_score = 3.0; // Moderate Accumulation
+            }
+        }
 
         // Pressure — rasio buy/sell
         let pressure_score = if sell_vol == 0.0 {
@@ -296,13 +309,19 @@ impl FilterEngine {
             s.market_ctx.add_momentum_result(momentum_pct >= 3.0);
         }
 
-        // AMBIL NILAI KONFIGURASI DULU, LALU LEPAS LOCK
+        // 1. Confidence Score Check (Dihitung di awal agar bisa digunakan di filter)
+        let score = {
+            let cfg = self.config.read().await;
+            TokenScore::calculate(vol, holder_count as u32, velocity, momentum_pct, buy_vol, sell_vol, &cfg)
+        };
+
+        // 2. AMBIL NILAI KONFIGURASI
         let (v_thresh, vol_thresh, buyers_thresh, is_paused, cfg_reason, cfg_mode) = {
             let cfg = self.config.read().await;
             (cfg.velocity_thresh, cfg.volume_thresh, cfg.buyers_thresh, cfg.mode == MarketMode::Pause, cfg.reason.clone(), cfg.mode.clone())
         };
 
-        // 1. Filter Volume
+        // 3. Filter Volume
         let mut fail_vol = false;
         let mut fail_holders = false;
         let mut fail_mom = false;
@@ -316,19 +335,29 @@ impl FilterEngine {
             fail_vol = true;
         }
 
-        // 2. Filter Unique Buyers
+        // 4. Filter Unique Buyers
         if (holder_count as u32) < buyers_thresh {
             info!("❌ {} Ditolak: Buyers {} < {}", token.symbol, holder_count, buyers_thresh);
             fail_holders = true;
         }
 
-        // 3. Price Momentum Check (Evaluasi Trading)
-        if momentum_pct < 3.0 {
-            info!("❌ {} Ditolak: Momentum Lemah ({:.2}%)", token.symbol, momentum_pct);
-            fail_mom = true;
+        // 5. Momentum Check (Evaluasi Trading)
+        // Lolos jika Skor Momentum >= 3.0 ATAU Volume Momentum (Quiet Accumulation) sangat kuat
+        if score.breakdown.momentum_score < 3.0 {
+            let volume_momentum_strong = score.breakdown.velocity_score >= 20.0 
+                && score.breakdown.late_dominance_score >= 25.0 
+                && holder_count > 5;
+            
+            if !volume_momentum_strong {
+                info!("❌ {} Ditolak: Momentum Lemah (Price: {:.2}%, Score M: {:.0})", token.symbol, momentum_pct, score.breakdown.momentum_score);
+                fail_mom = true;
+            } else {
+                info!("⚡ {} Quiet Accumulation Terdeteksi (Price: {:.2}%, Vel Score: {:.1}, Late Score: {:.1})", 
+                    token.symbol, momentum_pct, score.breakdown.velocity_score, score.breakdown.late_dominance_score);
+            }
         }
 
-        // 4. Filter Pump-and-Dump (Hold Time Minimum)
+        // 6. Filter Pump-and-Dump (Hold Time Minimum)
         // Hitung berapa cepat volume tumbuh di paruh PERTAMA vs KEDUA
         let early_velocity = early_volume / 30.0;   // SOL/detik paruh 1
         let late_velocity  = velocity   / 30.0;   // SOL/detik paruh 2
@@ -340,13 +369,13 @@ impl FilterEngine {
             fail_pump = true;
         }
 
-        // 5. Velocity Check (sebelumnya 4)
+        // 7. Velocity Check
         if velocity < v_thresh {
             info!("❌ {} Ditolak: Velocity {:.2} < {:.2}", token.symbol, velocity, v_thresh);
             fail_vel = true;
         }
 
-        // 5. Buy/Sell Pressure Check
+        // 8. Buy/Sell Pressure Check
         let ratio = if sell_vol > 0.0 { buy_vol / sell_vol } else { 99.0 };
         info!("🔍 Pressure Check: {} | Ratio: {:.2} (B: {:.2} S: {:.2})", token.symbol, ratio, buy_vol, sell_vol);
         
@@ -355,18 +384,22 @@ impl FilterEngine {
             fail_press = true;
         }
 
-        // 6. Confidence Score Check
-        let score = {
-            let cfg = self.config.read().await;
-            TokenScore::calculate(vol, holder_count as u32, velocity, momentum_pct, buy_vol, sell_vol, &cfg)
+        // 9. Total Score Threshold Check
+        let mut min_score = match cfg_mode {
+            MarketMode::Hot     => 60.0, 
+            MarketMode::Normal  => 65.0, 
+            MarketMode::Strict  => 70.0, 
+            MarketMode::Pause   => 80.0, 
         };
 
-        let min_score = match cfg_mode {
-            MarketMode::Hot     => 62.0, // turunkan sedikit
-            MarketMode::Normal  => 68.0, // turunkan dari 72
-            MarketMode::Strict  => 75.0, // turunkan dari 80
-            MarketMode::Pause   => 85.0, // turunkan dari 88
-        };
+        // BOOTSTRAP MODE: Jika trade masih sedikit, longgarkan min_score
+        const BOOTSTRAP_TRADES: u32 = 5;
+        let total_trades = self.state.lock().await.total_trades;
+        if total_trades < BOOTSTRAP_TRADES {
+            min_score -= 10.0;
+            info!("🚀 BOOTSTRAP MODE ({}): Melonggarkan min_score ke {:.1} SOL untuk mengumpulkan data awal.", 
+                total_trades + 1, min_score);
+        }
 
         if score.total < min_score {
             info!("❌ {} Ditolak: Skor {:.1} < {:.1} (V:{:.0} B:{:.0} Vel:{:.0} M:{:.0} P:{:.0} L:{:.0})",
@@ -378,17 +411,6 @@ impl FilterEngine {
                 score.breakdown.pressure_score,
                 score.breakdown.late_dominance_score,
             );
-            fail_score = true;
-        }
-
-        // Hard minimum per komponen (Aksi 4)
-        if score.breakdown.velocity_score < 7.0 {
-            info!("❌ {} Ditolak: Velocity score terlalu rendah ({:.0})", token.symbol, score.breakdown.velocity_score);
-            fail_score = true;
-        }
-
-        if score.breakdown.momentum_score < 3.0 { // Tadi di Aksi 2, momentum >= 5% dapat 3.0. Jadi < 3.0 berarti < 5% momentum.
-            info!("❌ {} Ditolak: Momentum score terlalu rendah ({:.0})", token.symbol, score.breakdown.momentum_score);
             fail_score = true;
         }
 
