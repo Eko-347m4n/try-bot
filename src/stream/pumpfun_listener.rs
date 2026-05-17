@@ -3,7 +3,7 @@ use crate::telegram::TelegramNotifier;
 use futures_util::{StreamExt, SinkExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use tracing::{info, error, warn};
+use tracing::{info, error, warn, debug};
 use url::Url;
 use chrono::Utc;
 use anyhow::Result;
@@ -21,7 +21,7 @@ impl PumpfunListener {
         Self { ws_url, tx, notifier }
     }
 
-    pub async fn start(&self) -> Result<()> {
+    pub async fn start(&self, mut cmd_rx: mpsc::UnboundedReceiver<BotEvent>) -> Result<()> {
         let url = Url::parse(&self.ws_url)?;
         let mut delay = Duration::from_secs(1);
 
@@ -65,6 +65,13 @@ impl PumpfunListener {
                                     break;
                                 }
                             }
+                            Some(event) = cmd_rx.recv() => {
+                                if let BotEvent::Unsubscribe(mint) = event {
+                                    debug!("🔌 Melepas langganan token: {}", mint);
+                                    let msg = serde_json::json!({"method":"unsubscribeTokenTrade","keys":[mint]}).to_string();
+                                    let _ = tx_ws.send(msg);
+                                }
+                            }
                         }
                     }
                 }
@@ -96,14 +103,32 @@ impl PumpfunListener {
 
         let mint = match v.get("mint").and_then(|m| m.as_str()) {
             Some(m) => m.to_string(),
-            None => return,
+            None => {
+                if v.get("method").is_none() && v.get("error").is_none() {
+                    debug!("[WS_DEBUG] Pesan tanpa mint: {}", text);
+                }
+                return;
+            }
         };
 
         let v_sol = Self::parse_f64(v.get("vSolInBondingCurve"));
         let v_tokens = Self::parse_f64(v.get("vTokensInBondingCurve"));
-        let sol_amount = Self::parse_f64(v.get("solAmount")).unwrap_or(0.0);
-        let trader = v.get("traderPublicKey").and_then(|t| t.as_str()).unwrap_or("Unknown").to_string();
-        let tx_type = v.get("txType").and_then(|t| t.as_str()).unwrap_or("");
+        
+        // Fleksibel: Coba solAmount (pumpportal) dan sol_amount (beberapa rpc lain)
+        let sol_amount = Self::parse_f64(v.get("solAmount"))
+            .or_else(|| Self::parse_f64(v.get("sol_amount")))
+            .unwrap_or(0.0);
+
+        let trader = v.get("traderPublicKey")
+            .and_then(|t| t.as_str())
+            .or_else(|| v.get("trader").and_then(|t| t.as_str()))
+            .unwrap_or("Unknown").to_string();
+
+        let tx_type = v.get("txType")
+            .and_then(|t| t.as_str())
+            .or_else(|| v.get("tx_type").and_then(|t| t.as_str()))
+            .unwrap_or("")
+            .to_lowercase();
 
         // Hitung harga jika data bonding curve tersedia
         let actual_price = if let (Some(sol), Some(tokens)) = (v_sol, v_tokens) {
@@ -113,11 +138,8 @@ impl PumpfunListener {
         };
 
         if tx_type == "buy" || tx_type == "sell" {
-            // Log debug untuk memastikan volume masuk
-            if sol_amount > 0.1 {
-                info!("💎 Trade Terdeteksi: {} | {} SOL | {}", mint, sol_amount, tx_type);
-            }
-
+            debug!("[TRADE] {} | {:.2} SOL | {}", mint, sol_amount, tx_type);
+            
             let _ = self.tx.send(BotEvent::PriceUpdate {
                 token_address: mint,
                 price: actual_price,

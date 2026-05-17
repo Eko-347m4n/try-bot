@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::time::{Instant, Duration};
+use tracing::{debug, warn};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MarketRegime {
@@ -90,6 +91,12 @@ impl MarketContext {
         }
 
         self.tp_rate_1h = tp_rate;
+        debug!(
+            "[MC_UPDATE] global_velocity={:.4}, birth_rate={:.4}, token_count={}",
+            self.global_velocity,
+            self.birth_rate_5m,
+            self.token_births.len()
+        );
         self.update_regime();
     }
 
@@ -120,30 +127,41 @@ impl MarketContext {
             _            => score -= 2,
         }
 
-        // Momentum fail rate scoring
+        // Momentum fail rate scoring — DILONGGARKAN (sebelumnya sangat keras)
         match self.momentum_fail_rate {
-            r if r < 0.3 => score += 2,
-            r if r < 0.5 => score += 1,
-            r if r < 0.7 => { score -= 1; },
-            _            => score -= 3,
+            r if r < 0.5 => score += 2,
+            r if r < 0.7 => score += 1,
+            r if r < 0.85 => { score -= 1; },
+            _            => score -= 2,
         }
 
         // TP Rate scoring (hanya jika ada data trade)
         if self.tp_rate_1h > 0.0 {
             match self.tp_rate_1h {
-                r if r > 0.45 => score += 2,
-                r if r > 0.35 => score += 1,
-                r if r > 0.25 => score -= 1,
+                r if r > 0.40 => score += 2,
+                r if r > 0.30 => score += 1,
+                r if r > 0.20 => score -= 1,
                 _             => score -= 2,
             }
         }
 
         // Final Regime Decision dengan bantalan (padding)
-        self.regime = match score {
-            s if s >= 4  => MarketRegime::Hot,
-            s if s >= 1  => MarketRegime::Normal,
-            s if s >= -1 => MarketRegime::Cooling,
+        let regime = match score {
+            s if s >= 3  => MarketRegime::Hot,
+            s if s >= 0  => MarketRegime::Normal,
+            s if s >= -2 => MarketRegime::Cooling,
             _            => MarketRegime::Cold,
         };
+
+        warn!(
+            "[REGIME] score={}, global_vel={:.4}, birth={:.2}, mom_fail={:.2}, result={:?}",
+            score,
+            self.global_velocity,
+            self.birth_rate_5m,
+            self.momentum_fail_rate,
+            regime
+        );
+
+        self.regime = regime;
     }
 }

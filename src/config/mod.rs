@@ -53,8 +53,8 @@ pub struct StrategyParameters {
 impl StrategyParameters {
     pub fn default() -> Self {
         Self {
-            token_age_seconds: TokenAgeRange { min: 60, max: 180 }, // Diubah dari 30 ke 60
-            volume: VolumeThresholds { v30s: 5.0, v60s: 10.0 }, // Diubah dari 5.0/10.0 menjadi 5.0/10.0
+            token_age_seconds: TokenAgeRange { min: 60, max: 120 },
+            volume: VolumeThresholds { v30s: 3.0, v60s: 6.0 }, // Turunkan sedikit target volume dasar
             holder_growth: HolderGrowthThresholds { min_holder: 50, growth_per_30s: 20 },
             liquidity: LiquidityThresholds { min: 8.0 },
             distribution: DistributionThresholds { max_top_holder: 15.0, max_top5: 60.0 },
@@ -76,7 +76,7 @@ impl BotConfig {
             project_name: "pumpfun-quant-bot".to_string(),
             paper_trading: true,
             websocket_url: std::env::var("WEBSOCKET_URL")
-                .unwrap_or_else(|_| "wss://pumpportal.fun/api/data".to_string()),
+                .unwrap_or_else(|_| "wss://pumpdev.io/ws".to_string()),
         }
     }
 }

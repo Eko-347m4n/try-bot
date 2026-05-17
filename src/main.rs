@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stdout);
 
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new("info"))
+        .with(tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
         .with(stdout_layer)
         .with(file_layer)
         .init();
@@ -199,6 +199,7 @@ async fn main() -> Result<()> {
     }
 
     let (tx, mut rx) = mpsc::unbounded_channel();
+    let (listener_tx, listener_rx) = mpsc::unbounded_channel();
 
     let mut filter_engine = FilterEngine::new(
         strategy_params, tx.clone(), shared_state.clone(), notifier.clone(),
@@ -211,7 +212,7 @@ async fn main() -> Result<()> {
 
     let listener = PumpfunListener::new(bot_config.websocket_url, tx.clone(), notifier.clone());
     tokio::spawn(async move {
-        let _ = listener.start().await;
+        let _ = listener.start(listener_rx).await;
     });
 
     info!("Bot aktif. Menunggu event...");
@@ -224,6 +225,11 @@ async fn main() -> Result<()> {
                 break;
             }
             Some(event) = rx.recv() => {
+                if let BotEvent::Unsubscribe(_) = &event {
+                    let _ = listener_tx.send(event);
+                    continue;
+                }
+
                 let is_session_end = matches!(event, BotEvent::SessionEnd);
                 filter_engine.process_event(event.clone()).await;
                 simulation_engine.process_event(event).await;

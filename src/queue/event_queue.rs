@@ -44,6 +44,7 @@ pub enum BotEvent {
         entry_score: f64,
     },
     SellSignal(String),
+    Unsubscribe(String), // Tambahan: Untuk melepas langganan WebSocket
     SessionEnd, // Event untuk menutup sesi dan menghitung ROI
 }
 

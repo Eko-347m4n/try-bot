@@ -9,7 +9,7 @@ use dashmap::{DashMap, DashSet};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 use chrono::Utc;
 
 #[derive(Debug)]
@@ -169,6 +169,8 @@ impl FilterEngine {
                 if self.processed_tokens.contains(&token.address) { return; }
                 self.processed_tokens.insert(token.address.clone());
                 
+                debug!("[NEW_TOKEN] {} ({}) masuk.", token.symbol, token.address);
+
                 let (window_scanned, window_age) = {
                     let mut s = self.state.lock().await;
                     s.tokens_scanned += 1;
@@ -214,7 +216,10 @@ impl FilterEngine {
                 }
             }
             BotEvent::TokenMatured(token) => {
+                debug!("[EVENT_MATURED] Menerima event matured untuk {}.", token.symbol);
+                let addr = token.address.clone();
                 self.handle_token_matured(token).await;
+                let _ = self.tx.send(BotEvent::Unsubscribe(addr));
             }
             BotEvent::SessionEnd => {
                 let s = self.state.lock().await;
@@ -279,6 +284,11 @@ impl FilterEngine {
         let momentum_pct = ((latest_price / token.initial_price) - 1.0) * 100.0;
         let early_volume = half_volume.unwrap_or(0.0);
         let velocity = vol - early_volume;
+
+        debug!(
+            "[MATURED_DATA] {}: vol={:.2}, early={:.2}, velocity={:.2}, half_v_is_none={}",
+            token.symbol, vol, early_volume, velocity, half_volume.is_none()
+        );
 
         {
             let mut s = self.state.lock().await;
@@ -352,10 +362,10 @@ impl FilterEngine {
         };
 
         let min_score = match cfg_mode {
-            MarketMode::Hot     => 65.0,
-            MarketMode::Normal  => 72.0,
-            MarketMode::Strict  => 80.0,
-            MarketMode::Pause   => 88.0,
+            MarketMode::Hot     => 62.0, // turunkan sedikit
+            MarketMode::Normal  => 68.0, // turunkan dari 72
+            MarketMode::Strict  => 75.0, // turunkan dari 80
+            MarketMode::Pause   => 85.0, // turunkan dari 88
         };
 
         if score.total < min_score {
@@ -406,8 +416,10 @@ impl FilterEngine {
             s.total_passed += 1;
             s.window_passed += 1;
         }
-        self.last_velocities.push(velocity);
-        if self.last_velocities.len() > 100 { self.last_velocities.remove(0); }
+        
+        // PENTING: last_velocities dihapus, gunakan global_velocity dari MarketContext
+        // self.last_velocities.push(velocity);
+        // if self.last_velocities.len() > 100 { self.last_velocities.remove(0); }
 
         if is_paused {
             info!("⏸️ {} Lolos tapi Signal di-skip (Pause: {})", token.symbol, cfg_reason);
@@ -508,6 +520,14 @@ impl FilterEngine {
         }
 
         let mode = format!("{:?}", self.config.read().await.mode);
+
+        warn!(
+            "[FLUSH] avg_velocity={:.4}, global_vel={:.4}, last_vel_len={}, mode={}",
+            avg_velocity,
+            current_ctx.global_velocity,
+            self.last_velocities.len(),
+            mode
+        );
 
         db::insert_window_stats(
             &self.db,
