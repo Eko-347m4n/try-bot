@@ -294,7 +294,11 @@ impl FilterEngine {
         
         // 0. Update Market Context (SEBELUM FILTER)
         // Kita hitung metrik untuk "belajar" dari market, terlepas dari apakah kita akan trade token ini.
-        let momentum_pct = ((latest_price / token.initial_price) - 1.0) * 100.0;
+        let momentum_pct = if token.initial_price > 0.0 {
+            ((latest_price / token.initial_price) - 1.0) * 100.0
+        } else {
+            0.0
+        };
         let early_volume = half_volume.unwrap_or(0.0);
         let velocity = vol - early_volume;
 
@@ -445,6 +449,12 @@ impl FilterEngine {
 
         if is_paused {
             info!("⏸️ {} Lolos tapi Signal di-skip (Pause: {})", token.symbol, cfg_reason);
+            self.activity_monitor.remove(&token.address);
+            return;
+        }
+
+        if latest_price <= 0.0 {
+            warn!("⚠️ {} Lolos tapi Signal di-skip karena harga belum terdeteksi (0.0)", token.symbol);
             self.activity_monitor.remove(&token.address);
             return;
         }

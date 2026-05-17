@@ -162,7 +162,7 @@ pub async fn query_daily_summary(pool: &SqlitePool) -> DailySummary {
 }
 
 pub async fn insert_trade(pool: &SqlitePool, t: &TradeRecord) {
-    sqlx::query(
+    let res = sqlx::query(
         "INSERT INTO trades
          (timestamp, token_addr, entry_price, exit_price, pnl_pct,
           exit_type, hold_secs, volume_entry, velocity_score, buyers_count, entry_score, hour_utc)
@@ -173,7 +173,11 @@ pub async fn insert_trade(pool: &SqlitePool, t: &TradeRecord) {
     .bind(&t.exit_type).bind(t.hold_secs)
     .bind(t.volume_entry).bind(t.velocity_score)
     .bind(t.buyers_count).bind(t.entry_score).bind(t.hour_utc)
-    .execute(pool).await.unwrap();
+    .execute(pool).await;
+
+    if let Err(e) = res {
+        eprintln!("Gagal insert_trade: {}", e);
+    }
 }
 
 pub async fn query_win_rate_last_n(pool: &SqlitePool, n: i64) -> f64 {
@@ -207,7 +211,7 @@ pub async fn insert_window_stats(
     market_mode: &str,
 ) {
     let now = Utc::now().to_rfc3339();
-    sqlx::query(
+    let res = sqlx::query(
         "INSERT INTO window_stats
          (timestamp, scanned, passed, passed_rate, win_rate_30, avg_velocity, market_mode)
          VALUES (?,?,?,?,?,?,?)"
@@ -219,7 +223,11 @@ pub async fn insert_window_stats(
     .bind(win_rate_30)
     .bind(avg_velocity)
     .bind(market_mode)
-    .execute(pool).await.unwrap();
+    .execute(pool).await;
+
+    if let Err(e) = res {
+        eprintln!("Gagal insert_window_stats: {}", e);
+    }
 }
 
 pub async fn insert_virtual_topup(pool: &SqlitePool, amount_added: f64, balance_after: f64) {

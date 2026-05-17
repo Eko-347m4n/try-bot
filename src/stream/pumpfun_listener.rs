@@ -137,7 +137,7 @@ impl PumpfunListener {
             0.0
         };
 
-        if tx_type == "buy" || tx_type == "sell" {
+        if (tx_type == "buy" || tx_type == "sell") && actual_price > 0.0 {
             debug!("[TRADE] {} | {:.2} SOL | {}", mint, sol_amount, tx_type);
             
             let _ = self.tx.send(BotEvent::PriceUpdate {
@@ -163,14 +163,16 @@ impl PumpfunListener {
             // PENTING: Kirim NewToken DULU baru PriceUpdate
             let _ = self.tx.send(BotEvent::NewToken(token_data));
 
-            let _ = self.tx.send(BotEvent::PriceUpdate {
-                token_address: mint,
-                price: actual_price,
-                volume: sol_amount,
-                sender: trader,
-                timestamp: Utc::now(),
-                is_buy: true,
-            });
+            if actual_price > 0.0 {
+                let _ = self.tx.send(BotEvent::PriceUpdate {
+                    token_address: mint,
+                    price: actual_price,
+                    volume: sol_amount,
+                    sender: trader,
+                    timestamp: Utc::now(),
+                    is_buy: true,
+                });
+            }
         }
     }
 }
