@@ -231,8 +231,10 @@ impl FilterEngine {
             BotEvent::TokenMatured(token) => {
                 debug!("[EVENT_MATURED] Menerima event matured untuk {}.", token.symbol);
                 let addr = token.address.clone();
-                self.handle_token_matured(token).await;
-                let _ = self.tx.send(BotEvent::Unsubscribe(addr));
+                let is_passed = self.handle_token_matured(token).await;
+                if !is_passed {
+                    let _ = self.tx.send(BotEvent::Unsubscribe(addr));
+                }
             }
             BotEvent::SessionEnd => {
                 let s = self.state.lock().await;
@@ -272,11 +274,15 @@ impl FilterEngine {
             });
         } else {
             // Jika token sudah "matang", langsung evaluasi
-            self.handle_token_matured(token).await;
+            let addr = token.address.clone();
+            let is_passed = self.handle_token_matured(token).await;
+            if !is_passed {
+                let _ = self.tx.send(BotEvent::Unsubscribe(addr));
+            }
         }
     }
 
-    async fn handle_token_matured(&mut self, token: TokenData) {
+    async fn handle_token_matured(&mut self, token: TokenData) -> bool {
         let activity_data = {
             let activity = self.activity_monitor.get(&token.address);
             if activity.is_none() {
@@ -284,7 +290,7 @@ impl FilterEngine {
                 // Tambahkan ke metrik penolakan agar tidak ada gap statistik
                 let mut s = self.state.lock().await;
                 s.rejected_volume += 1; // Anggap gagal volume karena tidak ada data
-                return;
+                return false;
             }
             let a = activity.unwrap();
             (a.unique_buyers.len(), a.total_volume, a.latest_price, a.half_volume, a.buy_volume, a.sell_volume)
@@ -432,7 +438,7 @@ impl FilterEngine {
 
         if fail_vol || fail_holders || fail_mom || fail_pump || fail_vel || fail_press || fail_score {
             self.activity_monitor.remove(&token.address);
-            return;
+            return false;
         }
 
         // LOLOS SEMUA FILTER
@@ -450,13 +456,13 @@ impl FilterEngine {
         if is_paused {
             info!("⏸️ {} Lolos tapi Signal di-skip (Pause: {})", token.symbol, cfg_reason);
             self.activity_monitor.remove(&token.address);
-            return;
+            return false;
         }
 
-        if latest_price <= 0.0 {
-            warn!("⚠️ {} Lolos tapi Signal di-skip karena harga belum terdeteksi (0.0)", token.symbol);
+        if latest_price <= 1e-12 {
+            warn!("⚠️ {} Lolos tapi Signal di-skip karena harga belum valid (0.0)", token.symbol);
             self.activity_monitor.remove(&token.address);
-            return;
+            return false;
         }
 
         info!("✅ BUY SIGNAL: {} | Skor: {:.1} | Vol: {:.2} SOL | Buyers: {}", token.symbol, score.total, vol, holder_count);
@@ -477,6 +483,8 @@ impl FilterEngine {
         }) {
             warn!("Gagal mengirim BuySignal: {}", e);
         }
+        
+        true
     }
 
     async fn flush_window_stats(&mut self) {
@@ -521,12 +529,20 @@ impl FilterEngine {
         if regime != self.last_regime {
             if let Some(notifier) = &self.notifier {
                 let msg = format!(
-                    "🌐 *MARKET REGIME BERUBAH*: {:?} -> *{:?}*\n\n\
-                     📊 *Metrik Saat Ini:*\n\
-                     • Birth Rate: {:.1}/m\n\
-                     • Global Velocity: {:.2}\n\
-                     • Momentum Fail: {:.1}%\n\
-                     • TP Rate (1h): {:.1}%\n\n\
+                    "🌐 *MARKET REGIME BERUBAH*: {:?} -> *{:?}*
+
+
+                     📊 *Metrik Saat Ini:*
+
+                     • Birth Rate: {:.1}/m
+
+                     • Global Velocity: {:.2}
+
+                     • Momentum Fail: {:.1}%
+
+                     • TP Rate (1h): {:.1}%
+
+
                      Filter bot otomatis menyesuaikan.",
                     self.last_regime, regime,
                     current_ctx.birth_rate_5m,

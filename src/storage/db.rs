@@ -2,6 +2,7 @@ use sqlx::{SqlitePool, sqlite::{SqlitePoolOptions, SqliteConnectOptions}};
 use chrono::Utc;
 use serde::{Serialize, Deserialize};
 use std::str::FromStr;
+use tracing::error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeRecord {
@@ -162,6 +163,8 @@ pub async fn query_daily_summary(pool: &SqlitePool) -> DailySummary {
 }
 
 pub async fn insert_trade(pool: &SqlitePool, t: &TradeRecord) {
+    let pnl_pct = if t.pnl_pct.is_finite() { t.pnl_pct } else { 0.0 };
+
     let res = sqlx::query(
         "INSERT INTO trades
          (timestamp, token_addr, entry_price, exit_price, pnl_pct,
@@ -169,14 +172,14 @@ pub async fn insert_trade(pool: &SqlitePool, t: &TradeRecord) {
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
     )
     .bind(&t.timestamp).bind(&t.token_addr)
-    .bind(t.entry_price).bind(t.exit_price).bind(t.pnl_pct)
+    .bind(t.entry_price).bind(t.exit_price).bind(pnl_pct)
     .bind(&t.exit_type).bind(t.hold_secs)
     .bind(t.volume_entry).bind(t.velocity_score)
     .bind(t.buyers_count).bind(t.entry_score).bind(t.hour_utc)
     .execute(pool).await;
 
     if let Err(e) = res {
-        eprintln!("Gagal insert_trade: {}", e);
+        error!("Gagal insert_trade untuk {}: {}", t.token_addr, e);
     }
 }
 
@@ -226,7 +229,7 @@ pub async fn insert_window_stats(
     .execute(pool).await;
 
     if let Err(e) = res {
-        eprintln!("Gagal insert_window_stats: {}", e);
+        error!("Gagal insert_window_stats: {}", e);
     }
 }
 

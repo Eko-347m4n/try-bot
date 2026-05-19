@@ -190,9 +190,9 @@ async fn main() -> Result<()> {
             loop {
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 let last = s_clone.lock().await.last_ws_event;
-                if last.elapsed().as_secs() > 60 {
+                if last.elapsed().as_secs() > 120 {
                     warn!("WS silence detected — {}s tanpa event.", last.elapsed().as_secs());
-                    n_clone.send_generic_alert("⚠️ *WS SILENCE*: Tidak ada event >60s. Kemungkinan koneksi zombie.".to_string()).await;
+                    n_clone.send_generic_alert(format!("⚠️ *WS SILENCE*: Tidak ada event >120s ({}s). Kemungkinan koneksi zombie.", last.elapsed().as_secs())).await;
                 }
             }
         });

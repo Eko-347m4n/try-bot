@@ -43,9 +43,11 @@ impl PumpfunListener {
                             res = timeout(Duration::from_secs(60), read.next()) => {
                                 match res {
                                     Ok(Some(Ok(Message::Text(text)))) => {
+                                        let _ = self.tx.send(BotEvent::Heartbeat);
                                         self.process_message(text, &tx_ws).await;
                                     }
                                     Ok(Some(Ok(Message::Ping(payload)))) => {
+                                        let _ = self.tx.send(BotEvent::Heartbeat);
                                         let _ = write.send(Message::Pong(payload)).await;
                                     }
                                     Ok(None) | Ok(Some(Ok(Message::Close(_)))) => {
@@ -89,13 +91,16 @@ impl PumpfunListener {
 
     fn parse_f64(val: Option<&Value>) -> Option<f64> {
         val.and_then(|v| {
-            if v.is_f64() { v.as_f64() }
+            if v.is_number() { v.as_f64() }
             else if v.is_string() { v.as_str()?.parse::<f64>().ok() }
             else { None }
         })
     }
 
     async fn process_message(&self, text: String, tx_ws: &mpsc::UnboundedSender<String>) {
+        // Log payload mentah untuk debugging
+        debug!("[RAW_WS_MSG] {}", text);
+
         let v: Value = match serde_json::from_str(&text) {
             Ok(v) => v,
             Err(_) => return,
@@ -130,15 +135,15 @@ impl PumpfunListener {
             .unwrap_or("")
             .to_lowercase();
 
-        // Hitung harga jika data bonding curve tersedia
+        // Hitung harga jika data bonding curve tersedia, pastikan tidak nol
         let actual_price = if let (Some(sol), Some(tokens)) = (v_sol, v_tokens) {
-            if tokens > 0.0 { sol / tokens } else { 0.0 }
+            if tokens > 1e-12 && sol > 1e-12 { sol / tokens } else { 0.0 }
         } else {
             0.0
         };
 
         if (tx_type == "buy" || tx_type == "sell") && actual_price > 0.0 {
-            debug!("[TRADE] {} | {:.2} SOL | {}", mint, sol_amount, tx_type);
+            info!("[TRADE] {} | {:.5} SOL | {}", mint, sol_amount, tx_type);
             
             let _ = self.tx.send(BotEvent::PriceUpdate {
                 token_address: mint,
@@ -164,6 +169,7 @@ impl PumpfunListener {
             let _ = self.tx.send(BotEvent::NewToken(token_data));
 
             if actual_price > 0.0 {
+                info!("[CREATE_TRADE] {} | {:.5} SOL | {}", mint, sol_amount, trader);
                 let _ = self.tx.send(BotEvent::PriceUpdate {
                     token_address: mint,
                     price: actual_price,

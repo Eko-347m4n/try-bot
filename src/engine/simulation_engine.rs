@@ -4,7 +4,7 @@ use crate::storage::db::{self, TradeRecord};
 use crate::telegram::{TelegramNotifier, TradeResult};
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 use std::collections::{HashMap, VecDeque};
 use chrono::{DateTime, Utc, Timelike};
 use std::time::Instant;
@@ -23,6 +23,7 @@ pub struct Position {
 }
 
 pub struct SimulationEngine {
+    tx: mpsc::UnboundedSender<BotEvent>,
     open_positions: HashMap<String, Position>,
     closed_trades: Vec<f64>,
     last_prices: HashMap<String, f64>,
@@ -36,12 +37,13 @@ pub struct SimulationEngine {
 
 impl SimulationEngine {
     pub fn new(
-        _tx: mpsc::UnboundedSender<BotEvent>,
+        tx: mpsc::UnboundedSender<BotEvent>,
         state: SharedState,
         db: SqlitePool,
         notifier: Option<TelegramNotifier>,
     ) -> Self {
         Self {
+            tx,
             open_positions: HashMap::new(),
             closed_trades: Vec::new(),
             last_prices: HashMap::new(),
@@ -56,6 +58,10 @@ impl SimulationEngine {
 
     pub async fn process_event(&mut self, event: BotEvent) {
         match event {
+            BotEvent::Heartbeat | BotEvent::NewToken(_) => {
+                let mut s = self.state.lock().await;
+                s.last_ws_event = std::time::Instant::now();
+            }
             BotEvent::BuySignal { token_address, price, volume_at_entry, velocity_score, buyers_count, entry_score } => {
                 self.virtual_buy(token_address, price, volume_at_entry, velocity_score, buyers_count, entry_score).await;
             }
@@ -63,12 +69,12 @@ impl SimulationEngine {
                 {
                     let mut s = self.state.lock().await;
                     s.market_events += 1;
-                    s.last_ws_event = Instant::now();
+                    s.last_ws_event = std::time::Instant::now();
                 }
                 
                 if let Some(pos) = self.open_positions.get_mut(&token_address) {
                     pos.latest_price = price;
-                    pos.last_update = Instant::now();
+                    pos.last_update = std::time::Instant::now();
                     info!("📈 Update Harga ({}): {:.10} SOL", token_address, price);
                 }
                 self.last_prices.insert(token_address.clone(), price);
@@ -190,8 +196,14 @@ impl SimulationEngine {
     async fn close_one_position(&mut self, address: String, current_price: f64, exit_type: &str) {
         if let Some(pos) = self.open_positions.remove(&address) {
             db::delete_open_position(&self.db, &address).await;
+            let _ = self.tx.send(BotEvent::Unsubscribe(address.clone()));
             
-            let pnl_percent = (current_price - pos.entry_price) / pos.entry_price * 100.0;
+            let pnl_percent = if pos.entry_price > 1e-12 {
+                (current_price - pos.entry_price) / pos.entry_price * 100.0
+            } else {
+                error!("CRITICAL: entry_price adalah nol untuk {}. PNL tidak dapat dihitung.", address);
+                0.0
+            };
             let hold_time = (Utc::now() - pos.entry_time).num_seconds();
 
             self.closed_trades.push(pnl_percent);
@@ -209,6 +221,12 @@ impl SimulationEngine {
             }
             if self.recent_outcomes.len() > 20 { self.recent_outcomes.pop_front(); }
             
+            info!(
+                "{} Posisi Ditutup ({}): Entry: {:.6} SOL, Exit: {:.6} SOL, PNL: {:.2}%",
+                if pnl_percent >= 0.0 {"✅"} else {"🔻"},
+                exit_type, pos.entry_price, current_price, pnl_percent
+            );
+			
             let pnl_sol = pos.entry_size_sol * (1.0 + pnl_percent / 100.0);
             s.virtual_balance += pnl_sol;
             

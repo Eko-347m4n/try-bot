@@ -45,6 +45,7 @@ pub enum BotEvent {
     },
     SellSignal(String),
     Unsubscribe(String), // Tambahan: Untuk melepas langganan WebSocket
+    Heartbeat, // Tambahan: Untuk menandakan koneksi WS masih hidup
     SessionEnd, // Event untuk menutup sesi dan menghitung ROI
 }
 
