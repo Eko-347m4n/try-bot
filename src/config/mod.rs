@@ -60,7 +60,7 @@ impl StrategyParameters {
             holder_growth: HolderGrowthThresholds { min_holder: 50, growth_per_30s: 20 },
             liquidity: LiquidityThresholds { min: 8.0 },
             distribution: DistributionThresholds { max_top_holder: 15.0, max_top5: 60.0 },
-            risk: RiskParameters { entry_size: 0.1, take_profit: 15.0, stop_loss: 8.0 }, // TP +15%, SL -8%
+            risk: RiskParameters { entry_size: 0.1, take_profit: 30.0, stop_loss: 8.0 }, // TP +30%, SL -8%
             blackout_hours: vec![7, 12, 19],
             blackout_window_minutes: 15,
         }

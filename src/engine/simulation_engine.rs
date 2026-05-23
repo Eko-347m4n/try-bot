@@ -4,10 +4,15 @@ use crate::storage::db::{self, TradeRecord};
 use crate::telegram::{TelegramNotifier, TradeResult};
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 use std::collections::{HashMap, VecDeque};
 use chrono::{DateTime, Utc, Timelike};
 use std::time::Instant;
+
+const TRADING_FEE_RATE: f64 = 0.0125;  // 1.25% per sisi
+const PRIORITY_FEE_SOL: f64 = 0.002;   // per transaksi
+const SLIPPAGE_TP: f64 = 0.01;         // 1% estimasi slippage saat Take Profit
+const SLIPPAGE_SL: f64 = 0.03;         // 3% estimasi slippage saat Stop Loss (konservatif)
 
 #[derive(Debug, Clone)]
 pub struct Position {
@@ -20,6 +25,7 @@ pub struct Position {
     pub buyers_count: u32,
     pub entry_score: f64,
     pub entry_size_sol: f64,
+    pub total_buy_cost: f64,
 }
 
 pub struct SimulationEngine {
@@ -124,11 +130,20 @@ impl SimulationEngine {
             0.1 // Default entry size
         };
 
+        // Kalkulasi biaya pembelian (Trading Fee + Priority Fee)
+        let fee_buy = entry_size * TRADING_FEE_RATE;
+        let total_buy_cost = entry_size + fee_buy + PRIORITY_FEE_SOL;
+
+        if s.virtual_balance < total_buy_cost {
+            warn!("Saldo tidak cukup untuk biaya transaksi: {:.4} SOL < {:.4} SOL (Entry + Fees)", s.virtual_balance, total_buy_cost);
+            return;
+        }
+
         if s.total_trades < BOOTSTRAP_TRADES {
             info!("🚀 BOOTSTRAP BUY ({}): Menggunakan size kecil {:.3} SOL untuk mengumpulkan data.", s.total_trades + 1, entry_size);
         }
 
-        s.virtual_balance -= entry_size;
+        s.virtual_balance -= total_buy_cost;
         s.active_positions += 1;
         s.total_trades += 1;
         
@@ -159,9 +174,10 @@ impl SimulationEngine {
             buyers_count,
             entry_score,
             entry_size_sol: entry_size,
+            total_buy_cost,
         };
 
-        info!("🟢 VIRTUAL BUY: {} | Balance: {:.3} SOL | Size: {:.2}", address, s.virtual_balance, entry_size);
+        info!("🟢 VIRTUAL BUY: {} | Balance: {:.3} SOL | Net Cost: {:.4} SOL", address, s.virtual_balance, total_buy_cost);
         self.open_positions.insert(address, pos);
     }
 
@@ -182,8 +198,8 @@ impl SimulationEngine {
     async fn check_exit_conditions(&mut self, address: String, current_price: f64) {
         let mut exit_type = None;
         if let Some(pos) = self.open_positions.get(&address) {
-            let tp = pos.entry_price * 1.15;
-            let sl = pos.entry_price * 0.92;
+            let tp = pos.entry_price * 1.30; // Target +30%
+            let sl = pos.entry_price * 0.92; // Batas -8%
             if current_price >= tp { exit_type = Some("TP".to_string()); }
             else if current_price <= sl { exit_type = Some("SL".to_string()); }
         }
@@ -198,15 +214,30 @@ impl SimulationEngine {
             db::delete_open_position(&self.db, &address).await;
             let _ = self.tx.send(BotEvent::Unsubscribe(address.clone()));
             
-            let pnl_percent = if pos.entry_price > 1e-12 {
-                (current_price - pos.entry_price) / pos.entry_price * 100.0
+            // 1. Tentukan harga keluar efektif setelah slippage asimetris
+            let effective_exit_price = if exit_type == "TP" {
+                current_price * (1.0 - SLIPPAGE_TP)
             } else {
-                error!("CRITICAL: entry_price adalah nol untuk {}. PNL tidak dapat dihitung.", address);
+                current_price * (1.0 - SLIPPAGE_SL)
+            };
+
+            // 2. Kalkulasi Gross Return menggunakan harga efektif
+            let gross_return = pos.entry_size_sol * (effective_exit_price / pos.entry_price);
+
+            // 3. Potongan fee sisi jual
+            let fee_sell = gross_return * TRADING_FEE_RATE;
+            let net_return = gross_return - fee_sell - PRIORITY_FEE_SOL;
+
+            // 4. Hitung Net PNL persentase (dibandingkan dengan total_buy_cost)
+            let net_pnl_percent = if pos.total_buy_cost > 1e-12 {
+                (net_return - pos.total_buy_cost) / pos.total_buy_cost * 100.0
+            } else {
                 0.0
             };
+
             let hold_time = (Utc::now() - pos.entry_time).num_seconds();
 
-            self.closed_trades.push(pnl_percent);
+            self.closed_trades.push(net_pnl_percent);
             self.hold_times_secs.push(hold_time);
             
             let mut s = self.state.lock().await;
@@ -222,13 +253,12 @@ impl SimulationEngine {
             if self.recent_outcomes.len() > 20 { self.recent_outcomes.pop_front(); }
             
             info!(
-                "{} Posisi Ditutup ({}): Entry: {:.6} SOL, Exit: {:.6} SOL, PNL: {:.2}%",
-                if pnl_percent >= 0.0 {"✅"} else {"🔻"},
-                exit_type, pos.entry_price, current_price, pnl_percent
+                "{} Posisi Ditutup ({}): Net Cost: {:.4} SOL, Net Return: {:.4} SOL, Net PNL: {:.2}%",
+                if net_pnl_percent >= 0.0 {"✅"} else {"🔻"},
+                exit_type, pos.total_buy_cost, net_return, net_pnl_percent
             );
 			
-            let pnl_sol = pos.entry_size_sol * (1.0 + pnl_percent / 100.0);
-            s.virtual_balance += pnl_sol;
+            s.virtual_balance += net_return;
             
             // Sync total_pnl_pct dengan ROI baru
             let current_roi = s.total_roi_pct();
@@ -244,7 +274,7 @@ impl SimulationEngine {
                 token_addr: address.clone(),
                 entry_price: pos.entry_price,
                 exit_price: current_price,
-                pnl_pct: pnl_percent,
+                pnl_pct: net_pnl_percent,
                 exit_type: exit_type.to_string(),
                 hold_secs: hold_time,
                 volume_entry: pos.volume_at_entry,
@@ -258,7 +288,7 @@ impl SimulationEngine {
             if let Some(notifier) = &self.notifier {
                 notifier.send_trade_alert(&TradeResult {
                     token_addr: address,
-                    pnl_pct: pnl_percent,
+                    pnl_pct: net_pnl_percent,
                     hold_secs: hold_time,
                     exit_type: exit_type.to_string(),
                     session_roi: current_roi,

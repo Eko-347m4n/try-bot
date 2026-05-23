@@ -28,32 +28,37 @@ impl TelegramNotifier {
     }
 
     pub async fn send_trade_alert(&self, trade: &TradeResult) {
-        let emoji = if trade.pnl_pct > 0.0 { "✅" } else { "❌" };
+        let emoji = if trade.pnl_pct > 0.0 { "✅" } else { "🔻" };
         let msg = format!(
-            "Trade selesai\n\
+            "📦 *TRADE CLOSED*\n\n\
              Token: `{}`\n\
-             Exit: {} {} {:.2}%\n\
-             Hold: {}s\n\
-             Session ROI: {:.2}%",
-            if trade.token_addr.len() > 8 { &trade.token_addr[..8] } else { &trade.token_addr },
-            trade.exit_type, emoji, trade.pnl_pct.abs(),
+             Result: *{} {} {:.2}%*\n\
+             Hold Time: *{}s*\n\n\
+             📈 *Session ROI:* `{:.2}%` bersih",
+            trade.token_addr,
+            trade.exit_type, emoji, trade.pnl_pct,
             trade.hold_secs,
             trade.session_roi
         );
-        self.bot.send_message(self.chat_id, msg).await.ok();
+        self.bot.send_message(self.chat_id, msg)
+            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+            .await.ok();
     }
 
     pub async fn send_buy_alert(&self, token: &str, velocity: f64, buyers: u32, score: f64) {
         let msg = format!(
-            "BUY signal\n\
+            "🚀 *VIRTUAL BUY SIGNAL*\n\n\
              Token: `{}`\n\
-             Skor: *{:.1}*\n\
-             Velocity: {:.2} SOL/30s\n\
-             Buyers: {}",
-            if token.len() > 8 { &token[..8] } else { token },
-            score, velocity, buyers
+             Score: *{:.1}/10*\n\
+             Velocity: `{:.2}` SOL/30s\n\
+             Buyers: `{}`\n\n\
+             [Pump.fun](https://pump.fun/{}) | [DexS](https://dexscreener.com/solana/{})",
+            token, score, velocity, buyers, token, token
         );
-        self.bot.send_message(self.chat_id, msg).disable_notification(true).await.ok();
+        self.bot.send_message(self.chat_id, msg)
+            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+            .disable_notification(true)
+            .await.ok();
     }
 
     pub async fn send_generic_alert(&self, msg: String) {
@@ -126,52 +131,82 @@ async fn answer(bot: Bot, msg: Message, cmd: Command, state: SharedState, db: Sq
     match cmd {
         Command::Status => {
             let s = state.lock().await;
+            let status_emoji = if s.is_running { "🟢 RUNNING" } else { "🔴 PAUSED" };
             let uptime = if let Some(start) = s.started_at {
                 let elapsed = start.elapsed().as_secs();
                 format!("{}m {}s", elapsed / 60, elapsed % 60)
             } else {
                 "Unknown".to_string()
             };
-            let regime = format!("{:?}", s.market_ctx.regime);
-            bot.send_message(msg.chat.id, format!(
-                "🤖 *STATUS BOT*\n\n\
-                 Running: {}\n\
-                 Regime: *{}*\n\
-                 Uptime: {}\n\
-                 Balance: *{:.3} SOL*\n\n\
-                 Trades: {}\n\
-                 Win Rate: {:.1}%\n\
-                 ROI: {:.2}%\n\
-                 Active Pos: {}", 
-                s.is_running, regime, uptime, s.virtual_balance,
+            
+            let response = format!(
+                "<b>🤖 STATUS BOT</b>\n\n\
+                 Status: <b>{}</b>\n\
+                 Regime: <code>{:?}</code>\n\
+                 Uptime: <code>{}</code>\n\n\
+                 💰 <b>Portfolio (Net):</b>\n\
+                 Balance: <code>{:.3} SOL</code>\n\
+                 Bersih: <code>{:.2}% ROI</code>\n\n\
+                 📊 <b>Performance:</b>\n\
+                 Trades: <code>{}</code>\n\
+                 Win Rate: <code>{:.1}%</code>\n\
+                 Active: <code>{} pos</code>", 
+                status_emoji, s.market_ctx.regime, uptime,
+                s.virtual_balance, s.total_roi_pct(),
                 s.total_trades, 
                 if s.total_trades > 0 { (s.tp_hits as f64 / s.total_trades as f64) * 100.0 } else { 0.0 }, 
-                s.total_roi_pct(), s.active_positions)).await?;
+                s.active_positions
+            );
+            bot.send_message(msg.chat.id, response).parse_mode(teloxide::types::ParseMode::Html).await?;
         }
         Command::Report => {
             let s = state.lock().await;
-            bot.send_message(msg.chat.id, format!("ROI: {:.2}%\nTP: {}, SL: {}\nTotal Trades: {}", s.total_roi_pct(), s.tp_hits, s.sl_hits, s.total_trades)).await?;
+            let wr = if s.total_trades > 0 { (s.tp_hits as f64 / s.total_trades as f64) * 100.0 } else { 0.0 };
+            let response = format!(
+                "📊 <b>SUMMARY LAPORAN SESI</b>\n\n\
+                 ROI Bersih: <b>{:.2}%</b>\n\
+                 Win Rate: <b>{:.1}%</b>\n\n\
+                 ✅ TP Hits: <code>{}</code>\n\
+                 🔻 SL Hits: <code>{}</code>\n\
+                 🔄 Total Trade: <code>{}</code>",
+                s.total_roi_pct(), wr, s.tp_hits, s.sl_hits, s.total_trades
+            );
+            bot.send_message(msg.chat.id, response).parse_mode(teloxide::types::ParseMode::Html).await?;
         }
         Command::Filter => {
             let s = state.lock().await;
-            bot.send_message(msg.chat.id, format!("Scanned: {}\nRejected Vol: {}\nRejected Hold: {}\nRejected Mom: {}\nRejected Vel: {}\nRejected Pres: {}\nRejected Score: {}\nPassed: {}", 
-                s.tokens_scanned, s.rejected_volume, s.rejected_holders, s.rejected_momentum, s.rejected_velocity, s.rejected_pressure, s.rejected_score, s.passed_filter)).await?;
+            let response = format!(
+                "🔍 <b>STATISTIK FILTER</b>\n\n\
+                 Scanned: <code>{}</code>\n\
+                 Passed: <b>{}</b>\n\n\
+                 <b>Rejection Reasons:</b>\n\
+                 - Volume: <code>{}</code>\n\
+                 - Holders: <code>{}</code>\n\
+                 - Momentum: <code>{}</code>\n\
+                 - Velocity: <code>{}</code>\n\
+                 - Score: <code>{}</code>",
+                s.tokens_scanned, s.passed_filter,
+                s.rejected_volume, s.rejected_holders,
+                s.rejected_momentum, s.rejected_velocity,
+                s.rejected_score
+            );
+            bot.send_message(msg.chat.id, response).parse_mode(teloxide::types::ParseMode::Html).await?;
         }
         Command::Pause => {
             state.lock().await.is_running = false;
-            bot.send_message(msg.chat.id, "Bot paused.").await?;
+            bot.send_message(msg.chat.id, "⏸️ <b>Bot di-pause.</b> Sinyal baru tidak akan diproses.").parse_mode(teloxide::types::ParseMode::Html).await?;
         }
         Command::Resume => {
             state.lock().await.is_running = true;
-            bot.send_message(msg.chat.id, "Bot resumed.").await?;
+            bot.send_message(msg.chat.id, "▶️ <b>Bot dilanjutkan.</b> Memulai pencarian sinyal baru...").parse_mode(teloxide::types::ParseMode::Html).await?;
         }
         Command::SetVolume(val) => {
             state.lock().await.volume_threshold = val;
-            bot.send_message(msg.chat.id, format!("Volume threshold set to {}", val)).await?;
+            bot.send_message(msg.chat.id, format!("✅ Volume threshold diubah ke <b>{} SOL</b>", val)).parse_mode(teloxide::types::ParseMode::Html).await?;
         }
         Command::SetVelocity(val) => {
             state.lock().await.velocity_threshold = val;
-            bot.send_message(msg.chat.id, format!("Velocity threshold set to {}", val)).await?;
+            bot.send_message(msg.chat.id, format!("✅ Velocity threshold diubah ke <b>{}</b>", val)).parse_mode(teloxide::types::ParseMode::Html).await?;
         }
         Command::History => {
             let rows = sqlx::query("SELECT token_addr, exit_type, pnl_pct FROM trades ORDER BY id DESC LIMIT 10")
@@ -179,23 +214,24 @@ async fn answer(bot: Bot, msg: Message, cmd: Command, state: SharedState, db: Sq
                 .await;
 
             if let Ok(rows) = rows {
-                let mut results = Vec::new();
+                let mut results = vec!["📜 <b>10 TRADE TERAKHIR:</b>\n".to_string()];
                 for row in rows {
                     use sqlx::Row;
                     let addr: String = row.get("token_addr");
                     let exit_type: String = row.get("exit_type");
                     let pnl: f64 = row.get("pnl_pct");
-                    results.push(format!("{}: {} ({:.2}%)", if addr.len() > 8 { &addr[..8] } else { &addr }, exit_type, pnl));
+                    let emoji = if pnl >= 0.0 { "✅" } else { "🔻" };
+                    results.push(format!("{} <code>{}</code>: <b>{:.2}%</b> ({})", emoji, if addr.len() > 8 { &addr[..8] } else { &addr }, pnl, exit_type));
                 }
-                let msg_text = if results.is_empty() { "No trades yet.".to_string() } else { results.join("\n") };
-                bot.send_message(msg.chat.id, msg_text).await?;
+                let msg_text = if results.len() == 1 { "Belum ada riwayat perdagangan.".to_string() } else { results.join("\n") };
+                bot.send_message(msg.chat.id, msg_text).parse_mode(teloxide::types::ParseMode::Html).await?;
             } else {
-                bot.send_message(msg.chat.id, "Failed to get history.").await?;
+                bot.send_message(msg.chat.id, "❌ Gagal mengambil riwayat dari database.").await?;
             }
         }
         Command::Winrate => {
             let wr = db::query_win_rate_last_n(&db, 20).await;
-            bot.send_message(msg.chat.id, format!("Rolling Winrate (last 20): {:.1}%", wr * 100.0)).await?;
+            bot.send_message(msg.chat.id, format!("🏆 <b>Rolling Winrate (20 trade terakhir):</b>\n\nDasar: <b>{:.1}%</b>", wr * 100.0)).parse_mode(teloxide::types::ParseMode::Html).await?;
         }
     }
     Ok(())
