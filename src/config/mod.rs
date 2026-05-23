@@ -48,6 +48,8 @@ pub struct StrategyParameters {
     pub liquidity: LiquidityThresholds,
     pub distribution: DistributionThresholds,
     pub risk: RiskParameters,
+    pub blackout_hours: Vec<u32>,        // Jam UTC untuk skip trading
+    pub blackout_window_minutes: u32,  // Menit sebelum/sesudah blackout_hours
 }
 
 impl StrategyParameters {
@@ -59,6 +61,8 @@ impl StrategyParameters {
             liquidity: LiquidityThresholds { min: 8.0 },
             distribution: DistributionThresholds { max_top_holder: 15.0, max_top5: 60.0 },
             risk: RiskParameters { entry_size: 0.1, take_profit: 15.0, stop_loss: 8.0 }, // TP +15%, SL -8%
+            blackout_hours: vec![7, 12, 19],
+            blackout_window_minutes: 15,
         }
     }
 }

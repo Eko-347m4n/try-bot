@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 use tracing::{info, warn, debug};
-use chrono::Utc;
+use chrono::{Utc, Timelike};
 
 #[derive(Debug)]
 struct TokenActivity {
@@ -244,9 +244,11 @@ impl FilterEngine {
                 info!("Rejected (Holders)   : {}", s.rejected_holders);
                 info!("Rejected (Momentum)  : {}", s.rejected_momentum);
                 info!("Rejected (Velocity)  : {}", s.rejected_velocity);
+                info!("Rejected (Ext Vel)   : {}", s.rejected_extreme_velocity);
                 info!("Rejected (Pressure)  : {}", s.rejected_pressure);
                 info!("Rejected (Score)     : {}", s.rejected_score);
-                info!("Rejected (Schedule)  : {}", s.rejected_schedule);
+                info!("Rejected (Schedule)  : {} (H07: {}, H12: {}, H19: {})", 
+                    s.rejected_schedule, s.rejected_schedule_h07, s.rejected_schedule_h12, s.rejected_schedule_h19);
                 info!("Rejected (Pump-Dump) : {}", s.rejected_pump);
                 info!("Passed Filter        : {}", s.passed_filter);
                 info!("=================================");
@@ -326,9 +328,9 @@ impl FilterEngine {
         };
 
         // 2. AMBIL NILAI KONFIGURASI
-        let (v_thresh, vol_thresh, buyers_thresh, is_paused, cfg_reason, cfg_mode) = {
+        let (v_thresh, max_v_thresh, vol_thresh, buyers_thresh, is_paused, cfg_reason, cfg_mode) = {
             let cfg = self.config.read().await;
-            (cfg.velocity_thresh, cfg.volume_thresh, cfg.buyers_thresh, cfg.mode == MarketMode::Pause, cfg.reason.clone(), cfg.mode.clone())
+            (cfg.velocity_thresh, cfg.max_velocity_thresh, cfg.volume_thresh, cfg.buyers_thresh, cfg.mode == MarketMode::Pause, cfg.reason.clone(), cfg.mode.clone())
         };
 
         // 3. Filter Volume
@@ -337,8 +339,38 @@ impl FilterEngine {
         let mut fail_mom = false;
         let mut fail_pump = false;
         let mut fail_vel = false;
+        let mut fail_extreme_vel = false;
         let mut fail_press = false;
         let mut fail_score = false;
+        let mut fail_schedule = false;
+        let mut nearest_dead_hour: u32 = 0;
+
+        // 3a. Time Filter: Blackout Window Check
+        let now = Utc::now();
+        let current_hour = now.hour();
+        let current_min = now.minute();
+        let current_total_min = current_hour * 60 + current_min;
+
+        for &dead_hour in &self.params.blackout_hours {
+            let dead_total_min = dead_hour * 60;
+            // Hitung selisih menit (circular 24h)
+            let diff = if current_total_min > dead_total_min {
+                current_total_min - dead_total_min
+            } else {
+                dead_total_min - current_total_min
+            };
+            
+            // Handle cross-day (misal jam 23:55 vs jam 00:05)
+            let diff = std::cmp::min(diff, 1440 - diff);
+
+            if diff <= self.params.blackout_window_minutes {
+                info!("❌ {} Ditolak: Blackout Window (current={:02}:{:02} UTC, nearest_dead_hour={:02}:00 UTC)", 
+                    token.symbol, current_hour, current_min, dead_hour);
+                fail_schedule = true;
+                nearest_dead_hour = dead_hour;
+                break;
+            }
+        }
 
         if vol < vol_thresh {
             info!("❌ {} Ditolak: Vol {:.2} < {:.2} SOL", token.symbol, vol, vol_thresh);
@@ -384,6 +416,11 @@ impl FilterEngine {
             info!("❌ {} Ditolak: Velocity {:.2} < {:.2}", token.symbol, velocity, v_thresh);
             fail_vel = true;
         }
+        
+        if velocity > max_v_thresh {
+            info!("❌ {} Ditolak: Volatilitas Ekstrem ({:.2} > {:.2})", token.symbol, velocity, max_v_thresh);
+            fail_extreme_vel = true;
+        }
 
         // 8. Buy/Sell Pressure Check
         let ratio = if sell_vol > 0.0 { buy_vol / sell_vol } else { 99.0 };
@@ -424,19 +461,29 @@ impl FilterEngine {
             fail_score = true;
         }
 
-        // UPDATE METRICS (Satu kali lock untuk semua penolakan)
         {
             let mut s = self.state.lock().await;
-            if fail_vol     { s.rejected_volume += 1; }
-            if fail_holders { s.rejected_holders += 1; }
-            if fail_mom     { s.rejected_momentum += 1; }
-            if fail_pump    { s.rejected_pump += 1; }
-            if fail_vel     { s.rejected_velocity += 1; }
-            if fail_press   { s.rejected_pressure += 1; }
-            if fail_score   { s.rejected_score += 1; }
+            if fail_vol         { s.rejected_volume += 1; }
+            if fail_holders     { s.rejected_holders += 1; }
+            if fail_mom         { s.rejected_momentum += 1; }
+            if fail_pump        { s.rejected_pump += 1; }
+            if fail_vel         { s.rejected_velocity += 1; }
+            if fail_extreme_vel { s.rejected_extreme_velocity += 1; }
+            if fail_press       { s.rejected_pressure += 1; }
+            if fail_score       { s.rejected_score += 1; }
+            
+            if fail_schedule {
+                s.rejected_schedule += 1;
+                match nearest_dead_hour {
+                    7  => s.rejected_schedule_h07 += 1,
+                    12 => s.rejected_schedule_h12 += 1,
+                    19 => s.rejected_schedule_h19 += 1,
+                    _  => {} // Jam blackout kustom lainnya tidak dicatat granular saat ini
+                }
+            }
         }
 
-        if fail_vol || fail_holders || fail_mom || fail_pump || fail_vel || fail_press || fail_score {
+        if fail_vol || fail_holders || fail_mom || fail_pump || fail_vel || fail_extreme_vel || fail_press || fail_score || fail_schedule {
             self.activity_monitor.remove(&token.address);
             return false;
         }
