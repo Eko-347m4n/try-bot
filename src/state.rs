@@ -25,7 +25,6 @@ pub struct SessionState {
     pub window_scanned: u32,
     pub window_passed: u32,
     pub window_start: Instant,
-    
     pub tokens_scanned: u32, // Deprecated, keeping for compatibility
     pub rejected_volume: u32,
     pub rejected_holders: u32,
@@ -39,6 +38,8 @@ pub struct SessionState {
     pub rejected_schedule_h12: u32,
     pub rejected_schedule_h19: u32,
     pub rejected_pump: u32,
+    pub rejected_liquidity: u32, // New field for liquidity rejections
+    pub rejected_spike: u32,
     pub passed_filter: u32,
     // parameters
     pub volume_threshold: f64,
@@ -94,6 +95,8 @@ impl Default for SessionState {
             rejected_schedule_h12: 0,
             rejected_schedule_h19: 0,
             rejected_pump: 0,
+            rejected_liquidity: 0,
+            rejected_spike: 0,
             passed_filter: 0,
             volume_threshold: 3.0,
             velocity_threshold: 0.5,

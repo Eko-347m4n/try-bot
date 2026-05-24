@@ -9,6 +9,7 @@ pub struct TokenData {
     pub symbol: String,
     pub created_at: DateTime<Utc>,
     pub initial_price: f64,
+    pub initial_liquidity: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

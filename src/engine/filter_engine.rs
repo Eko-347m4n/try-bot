@@ -150,7 +150,7 @@ pub struct FilterEngine {
     db: SqlitePool,
     last_velocities: Vec<f64>, // Untuk menghitung avg_velocity window
     last_regime: crate::engine::market_context::MarketRegime,
-}
+    }
 
 impl FilterEngine {
     pub fn new(
@@ -250,6 +250,8 @@ impl FilterEngine {
                 info!("Rejected (Schedule)  : {} (H07: {}, H12: {}, H19: {})", 
                     s.rejected_schedule, s.rejected_schedule_h07, s.rejected_schedule_h12, s.rejected_schedule_h19);
                 info!("Rejected (Pump-Dump) : {}", s.rejected_pump);
+                info!("Rejected (Liquidity) : {}", s.rejected_liquidity);
+                info!("Rejected (Spike)     : {}", s.rejected_spike);
                 info!("Passed Filter        : {}", s.passed_filter);
                 info!("=================================");
             }
@@ -285,6 +287,15 @@ impl FilterEngine {
     }
 
     async fn handle_token_matured(&mut self, token: TokenData) -> bool {
+        // 0. Filter Likuiditas Minimum
+        if token.initial_liquidity < 10.0 {
+            info!("❌ {} Ditolak: Likuiditas awal {:.2} SOL < 10.0 SOL", token.symbol, token.initial_liquidity);
+            let mut s = self.state.lock().await;
+            s.rejected_liquidity += 1;
+            self.activity_monitor.remove(&token.address);
+            return false;
+        }
+
         let activity_data = {
             let activity = self.activity_monitor.get(&token.address);
             if activity.is_none() {
@@ -320,6 +331,19 @@ impl FilterEngine {
             s.market_ctx.add_velocity(velocity);
             s.market_ctx.add_momentum_result(momentum_pct >= 3.0);
         }
+
+        // --- Filter Lonjakan Kecepatan ---
+        let global_velocity = self.state.lock().await.market_ctx.global_velocity;
+        if global_velocity > 0.5 && velocity > 3.0 * global_velocity { // global_velocity > 0.5 untuk menghindari false positive pada pasar yang sangat sepi
+            info!("❌ {} Ditolak: Lonjakan Kecepatan (Token {:.2} SOL/30s > 3x Global {:.2} SOL/30s)",
+                token.symbol, velocity, global_velocity);
+            let mut s = self.state.lock().await;
+            s.rejected_spike += 1;
+            self.activity_monitor.remove(&token.address);
+            return false;
+        }
+        // --- Akhir Filter Lonjakan Kecepatan ---
+
 
         // 1. Confidence Score Check (Dihitung di awal agar bisa digunakan di filter)
         let score = {

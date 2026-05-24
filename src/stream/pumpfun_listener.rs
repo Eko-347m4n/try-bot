@@ -163,6 +163,7 @@ impl PumpfunListener {
                 symbol: v.get("symbol").and_then(|s| s.as_str()).unwrap_or("?").to_string(),
                 created_at: Utc::now(),
                 initial_price: actual_price,
+                initial_liquidity: v_sol.unwrap_or(0.0), // Ambil dari v_sol yang sudah di-parse
             };
             
             // PENTING: Kirim NewToken DULU baru PriceUpdate
