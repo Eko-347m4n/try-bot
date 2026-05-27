@@ -40,6 +40,7 @@ pub struct SessionState {
     pub rejected_pump: u32,
     pub rejected_liquidity: u32, // New field for liquidity rejections
     pub rejected_spike: u32,
+    pub rejected_market_mode: u32,
     pub passed_filter: u32,
     // parameters
     pub volume_threshold: f64,
@@ -97,6 +98,7 @@ impl Default for SessionState {
             rejected_pump: 0,
             rejected_liquidity: 0,
             rejected_spike: 0,
+            rejected_market_mode: 0,
             passed_filter: 0,
             volume_threshold: 3.0,
             velocity_threshold: 0.5,

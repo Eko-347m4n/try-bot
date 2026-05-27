@@ -357,6 +357,14 @@ impl FilterEngine {
             (cfg.velocity_thresh, cfg.max_velocity_thresh, cfg.volume_thresh, cfg.buyers_thresh, cfg.mode == MarketMode::Pause, cfg.reason.clone(), cfg.mode.clone())
         };
 
+        // --- Filter Eksklusif Mode Hot ---
+        let mut fail_mode = false;
+        if cfg_mode != MarketMode::Hot {
+            info!("❌ {} Ditolak: Bukan Market Hot (Mode Saat Ini: {:?})", token.symbol, cfg_mode);
+            fail_mode = true;
+        }
+        // --- Akhir Filter Eksklusif Mode Hot ---
+
         // 3. Filter Volume
         let mut fail_vol = false;
         let mut fail_holders = false;
@@ -487,6 +495,7 @@ impl FilterEngine {
 
         {
             let mut s = self.state.lock().await;
+            if fail_mode        { s.rejected_market_mode += 1; }
             if fail_vol         { s.rejected_volume += 1; }
             if fail_holders     { s.rejected_holders += 1; }
             if fail_mom         { s.rejected_momentum += 1; }
@@ -507,7 +516,7 @@ impl FilterEngine {
             }
         }
 
-        if fail_vol || fail_holders || fail_mom || fail_pump || fail_vel || fail_extreme_vel || fail_press || fail_score || fail_schedule {
+        if fail_mode || fail_vol || fail_holders || fail_mom || fail_pump || fail_vel || fail_extreme_vel || fail_press || fail_score || fail_schedule {
             self.activity_monitor.remove(&token.address);
             return false;
         }
