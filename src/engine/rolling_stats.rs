@@ -3,6 +3,7 @@ use sqlx::SqlitePool;
 
 #[derive(Debug, Clone)]
 pub struct MarketSnapshot {
+    #[allow(dead_code)]
     pub win_rate_30:    f64,  // WR 30 trade terakhir
 }
 

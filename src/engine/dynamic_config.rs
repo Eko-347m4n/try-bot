@@ -66,49 +66,70 @@ impl DynamicConfig {
         }
     }
 
-    pub fn from_context(s: &MarketSnapshot, context: &MarketContext) -> Self {
-        // 1. Cold market langsung pause
-        if context.regime == MarketRegime::Cold {
-            return Self::pause("Market regime: Cold");
-        }
+    pub fn from_context(_s: &MarketSnapshot, context: &MarketContext) -> Self {
+        // --- LOGIKA LAMA (DIKOMENTARI/DIHAPUS UNTUK MEMUTUS FEEDBACK LOOP NEGATIF) ---
+        // if context.regime == MarketRegime::Cold {
+        //     return Self::pause("Market regime: Cold");
+        // }
+        // if context.regime == MarketRegime::Unknown {
+        //     let mut cfg = Self::strict("Insufficient market data");
+        //     cfg.reason = "Data minim (Using Strict mode for safety)".into();
+        //     return cfg;
+        // }
+        // match (&context.regime, s.win_rate_30) {
+        //     (MarketRegime::Hot, wr) if wr >= 0.38 => {
+        //         let mut cfg = Self::normal_relaxed();
+        //         cfg.reason = format!("Hot Market + WR {:.0}%", wr * 100.0);
+        //         cfg
+        //     },
+        //     (MarketRegime::Hot, wr) => {
+        //         let mut cfg = Self::normal();
+        //         cfg.reason = format!("Hot Market but WR Low ({:.0}%)", wr * 100.0);
+        //         cfg
+        //     },
+        //     (MarketRegime::Normal, wr) if wr >= 0.40 => {
+        //         let mut cfg = Self::normal();
+        //         cfg.reason = format!("Normal Market + WR {:.0}%", wr * 100.0);
+        //         cfg
+        //     },
+        //     (MarketRegime::Normal, wr) => {
+        //         let cfg = Self::strict(&format!("WR Low ({:.0}%)", wr * 100.0));
+        //         cfg
+        //     },
+        //     (MarketRegime::Cooling, wr) if wr >= 0.38 => {
+        //         let mut cfg = Self::strict("Market Cooling");
+        //         cfg.reason = format!("Cooling but WR OK ({:.0}%)", wr * 100.0);
+        //         cfg
+        //     },
+        //     (MarketRegime::Cooling, _) => {
+        //         Self::pause("Cooling + Low WR")
+        //     },
+        //     _ => Self::pause("Regime tidak kondusif"),
+        // }
+        // --- AKHIR LOGIKA LAMA ---
 
-        // 2. Unknown -> Gunakan Mode Strict (Konservatif) saat data minim
-        if context.regime == MarketRegime::Unknown {
-            let mut cfg = Self::strict("Insufficient market data");
-            cfg.reason = "Data minim (Using Strict mode for safety)".into();
-            return cfg;
-        }
-
-        // 3. Kombinasi Regime + WR
-        match (&context.regime, s.win_rate_30) {
-            (MarketRegime::Hot, wr) if wr >= 0.38 => {
-                let mut cfg = Self::normal_relaxed();
-                cfg.reason = format!("Hot Market + WR {:.0}%", wr * 100.0);
+        // Logika baru berbasis pemetaan langsung dari MarketRegime ke MarketMode.
+        // Mengabaikan win_rate_30 untuk mencegah bot melumpuhkan diri sendiri.
+        match &context.regime {
+            MarketRegime::Hot => {
+                let mut cfg = Self::normal_relaxed(); // Mode paling santai untuk market Hot
+                cfg.reason = "Hot Market (WR Ignored)".into();
                 cfg
             },
-            (MarketRegime::Hot, wr) => {
-                let mut cfg = Self::normal();
-                cfg.reason = format!("Hot Market but WR Low ({:.0}%)", wr * 100.0);
+            MarketRegime::Normal => {
+                let mut cfg = Self::normal(); // Mode normal untuk market Normal
+                cfg.reason = "Normal Market (WR Ignored)".into();
                 cfg
             },
-            (MarketRegime::Normal, wr) if wr >= 0.40 => {
-                let mut cfg = Self::normal();
-                cfg.reason = format!("Normal Market + WR {:.0}%", wr * 100.0);
-                cfg
+            MarketRegime::Cooling => {
+                Self::strict("Market is Cooling Down (WR Ignored)") // Market Cooling = Strict
             },
-            (MarketRegime::Normal, wr) => {
-                let cfg = Self::strict(&format!("WR Low ({:.0}%)", wr * 100.0));
-                cfg
+            MarketRegime::Cold => {
+                Self::pause("Market is Cold (WR Ignored)") // Market Cold = Pause
             },
-            (MarketRegime::Cooling, wr) if wr >= 0.38 => {
-                let mut cfg = Self::strict("Market Cooling");
-                cfg.reason = format!("Cooling but WR OK ({:.0}%)", wr * 100.0);
-                cfg
-            },
-            (MarketRegime::Cooling, _) => {
-                Self::pause("Cooling + Low WR")
-            },
-            _ => Self::pause("Regime tidak kondusif"),
+            MarketRegime::Unknown => { // Ketika data minim, tetap konservatif
+                Self::strict("Insufficient market data (WR Ignored)")
+            }
         }
     }
 }

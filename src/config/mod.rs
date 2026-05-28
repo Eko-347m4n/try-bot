@@ -55,7 +55,7 @@ pub struct StrategyParameters {
 impl StrategyParameters {
     pub fn default() -> Self {
         Self {
-            token_age_seconds: TokenAgeRange { min: 60, max: 120 },
+            token_age_seconds: TokenAgeRange { min: 30, max: 120 },
             volume: VolumeThresholds { v30s: 3.0, v60s: 6.0 }, // Turunkan sedikit target volume dasar
             holder_growth: HolderGrowthThresholds { min_holder: 50, growth_per_30s: 20 },
             liquidity: LiquidityThresholds { min: 8.0 },

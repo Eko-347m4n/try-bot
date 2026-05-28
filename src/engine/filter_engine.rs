@@ -24,12 +24,12 @@ struct TokenActivity {
 
 #[derive(Debug)]
 pub struct ScoreBreakdown {
-    pub volume_score:   f64,  // max 25 poin
+    pub volume_score:   f64,  // max 15 poin
     pub buyers_score:   f64,  // max 25 poin
-    pub velocity_score: f64,  // max 25 poin
+    pub late_velocity_score: f64,  // turun jadi 15 poin
     pub momentum_score: f64,  // max 15 poin
     pub pressure_score: f64,  // max 10 poin
-    pub late_dominance_score: f64, // max 30 poin
+    pub early_acceleration_score: f64, // BARU, 30 poin
 }
 
 #[derive(Debug)]
@@ -42,7 +42,8 @@ impl TokenScore {
     pub fn calculate(
         total_volume: f64, 
         buyers: u32, 
-        late_volume: f64, // velocity di prompt, diganti jadi late_volume
+        late_volume: f64,
+        early_volume: f64, // PARAMETER BARU
         momentum_pct: f64, 
         buy_vol: f64, 
         sell_vol: f64, 
@@ -51,10 +52,10 @@ impl TokenScore {
         // Volume — semakin jauh di atas threshold, semakin tinggi skor
         let volume_ratio = if thresh.volume_thresh > 0.0 { total_volume / thresh.volume_thresh } else { 1.0 };
         let volume_score = match volume_ratio {
-            r if r >= 3.0 => 15.0,   // 3× threshold → skor penuh (sebelumnya 25)
-            r if r >= 2.0 => 12.0,   // (sebelumnya 20)
-            r if r >= 1.5 => 9.0,    // (sebelumnya 15)
-            r if r >= 1.0 => 5.0,    // (sebelumnya 8)
+            r if r >= 3.0 => 15.0,
+            r if r >= 2.0 => 12.0,
+            r if r >= 1.5 => 9.0,
+            r if r >= 1.0 => 5.0,
             _             => 0.0,
         };
 
@@ -68,42 +69,46 @@ impl TokenScore {
             _             => 0.0,
         };
 
-        // Velocity — kecepatan di paruh kedua window
-        let velocity_ratio = if thresh.velocity_thresh > 0.0 { late_volume / thresh.velocity_thresh } else { 1.0 };
-        let velocity_score = match velocity_ratio {
-            r if r >= 3.0 => 25.0,
-            r if r >= 2.0 => 20.0,
-            r if r >= 1.5 => 14.0,
-            r if r >= 1.0 => 7.0,
+        // Late Velocity — kecepatan di paruh kedua window (bobot diturunkan)
+        let late_velocity_ratio = if thresh.velocity_thresh > 0.0 { late_volume / thresh.velocity_thresh } else { 1.0 };
+        let late_velocity_score = match late_velocity_ratio {
+            r if r >= 2.5 => 15.0, // Maks 15 poin
+            r if r >= 1.5 => 10.0,
+            r if r >= 1.0 => 5.0,
             _             => 0.0,
         };
 
         // Momentum — seberapa kuat harga sudah naik (Price)
         // + Bonus untuk "Quiet Accumulation" (Volume Momentum)
         let mut momentum_score = match momentum_pct {
-            m if m >= 20.0 => 15.0,  // sangat kuat
+            m if m >= 20.0 => 15.0,
             m if m >= 12.0 => 12.0,
             m if m >= 8.0  => 8.0,
-            m if m >= 3.0  => 3.0,   // price confirmed - konsisten dengan filter min 3%
+            m if m >= 3.0  => 3.0,
             _              => 0.0,
         };
 
-        // Quiet Accumulation Check: Jika price belum bergerak, tapi volume akselerasi sangat kuat
-        // Ini adalah kandidat entry terbaik (Early Entry)
-        if momentum_score < 3.0 {
-            let velocity_ratio = if thresh.velocity_thresh > 0.0 { late_volume / thresh.velocity_thresh } else { 1.0 };
-            let late_ratio = if total_volume > 0.0 { late_volume / total_volume } else { 0.0 };
+        // Early Acceleration Score (BARU) — Volume di paruh pertama
+        let early_accel_ratio = if thresh.volume_thresh > 0.0 { early_volume / thresh.volume_thresh } else { 0.0 };
+        let early_acceleration_score = match early_accel_ratio {
+            r if r >= 2.5 => 30.0, // Volume 2.5x threshold di 30 detik pertama
+            r if r >= 1.5 => 20.0,
+            r if r >= 0.7 => 10.0, // Bahkan volume < threshold pun dapat skor jika ada
+            _             => 0.0,
+        };
 
-            if velocity_ratio >= 3.0 && late_ratio >= 0.55 {
-                momentum_score = 5.0; // Strong Accumulation: High acceleration + High Late dominance
-            } else if velocity_ratio >= 2.0 && late_ratio >= 0.50 {
-                momentum_score = 3.0; // Moderate Accumulation
-            }
+        // Quiet Accumulation Check: Jika price belum bergerak, tapi volume akselerasi sangat kuat di awal
+        // Ini adalah kandidat entry terbaik (Early Entry)
+        // Menggunakan early_acceleration_score sebagai pengganti dominasi akhir
+        if momentum_score < 3.0 && early_acceleration_score >= 10.0 {
+            momentum_score += early_acceleration_score * 0.5; // Bonus dari akselerasi awal
+            if momentum_score > 15.0 { momentum_score = 15.0; } // Max 15 poin
         }
+
 
         // Pressure — rasio buy/sell
         let pressure_score = if sell_vol == 0.0 {
-            10.0  // tidak ada sell → tekanan beli murni
+            10.0
         } else {
             let ratio = buy_vol / sell_vol;
             match ratio {
@@ -115,25 +120,16 @@ impl TokenScore {
             }
         };
 
-        // Tambah komponen baru: late_dominance (30 poin)
-        // Seberapa dominan paruh kedua vs paruh pertama
-        let late_ratio = if total_volume > 0.0 { late_volume / total_volume } else { 0.0 };
-        let late_dominance_score = match late_ratio {
-            r if r >= 0.65 => 30.0,  // 65%+ volume di paruh kedua → momentum masih kuat
-            r if r >= 0.55 => 22.0,
-            r if r >= 0.50 => 14.0,
-            r if r >= 0.45 => 5.0,
-            _              => 0.0,   // volume lebih banyak di paruh pertama → sudah lewat
-        };
+        // late_dominance_score dihapus
 
-        let total = volume_score + buyers_score + velocity_score
-                  + momentum_score + pressure_score + late_dominance_score;
+        let total = volume_score + buyers_score + late_velocity_score
+                  + momentum_score + pressure_score + early_acceleration_score; // Update total score
 
         Self {
             total,
             breakdown: ScoreBreakdown {
-                volume_score, buyers_score, velocity_score,
-                momentum_score, pressure_score, late_dominance_score,
+                volume_score, buyers_score, late_velocity_score,
+                momentum_score, pressure_score, early_acceleration_score,
             }
         }
     }
@@ -348,7 +344,7 @@ impl FilterEngine {
         // 1. Confidence Score Check (Dihitung di awal agar bisa digunakan di filter)
         let score = {
             let cfg = self.config.read().await;
-            TokenScore::calculate(vol, holder_count as u32, velocity, momentum_pct, buy_vol, sell_vol, &cfg)
+            TokenScore::calculate(vol, holder_count as u32, velocity, early_volume, momentum_pct, buy_vol, sell_vol, &cfg)
         };
 
         // 2. AMBIL NILAI KONFIGURASI
@@ -369,7 +365,6 @@ impl FilterEngine {
         let mut fail_vol = false;
         let mut fail_holders = false;
         let mut fail_mom = false;
-        let mut fail_pump = false;
         let mut fail_vel = false;
         let mut fail_extreme_vel = false;
         let mut fail_press = false;
@@ -415,33 +410,31 @@ impl FilterEngine {
             fail_holders = true;
         }
 
-        // 5. Momentum Check (Evaluasi Trading)
-        // Lolos jika Skor Momentum >= 3.0 ATAU Volume Momentum (Quiet Accumulation) sangat kuat
+        // 5. Momentum Check (Evaluasi Trading) - Diperbarui untuk fokus pada Early Acceleration
+        // Lolos jika Skor Momentum (dari Price) >= 3.0 ATAU Early Acceleration sangat kuat
         if score.breakdown.momentum_score < 3.0 {
-            let volume_momentum_strong = score.breakdown.velocity_score >= 20.0 
-                && score.breakdown.late_dominance_score >= 25.0 
-                && holder_count > 5;
+            let early_momentum_strong = score.breakdown.early_acceleration_score >= 20.0 && holder_count > 5;
             
-            if !volume_momentum_strong {
+            if !early_momentum_strong {
                 info!("❌ {} Ditolak: Momentum Lemah (Price: {:.2}%, Score M: {:.0})", token.symbol, momentum_pct, score.breakdown.momentum_score);
                 fail_mom = true;
             } else {
-                info!("⚡ {} Quiet Accumulation Terdeteksi (Price: {:.2}%, Vel Score: {:.1}, Late Score: {:.1})", 
-                    token.symbol, momentum_pct, score.breakdown.velocity_score, score.breakdown.late_dominance_score);
+                info!("⚡ {} Early Accumulation Terdeteksi (Price: {:.2}%, Early Accel Score: {:.1})", 
+                    token.symbol, momentum_pct, score.breakdown.early_acceleration_score);
             }
         }
 
-        // 6. Filter Pump-and-Dump (Hold Time Minimum)
+        // 6. Filter Pump-and-Dump (Hold Time Minimum) -- DIKOMENTARI: Logika ini menghukum early acceleration
         // Hitung berapa cepat volume tumbuh di paruh PERTAMA vs KEDUA
-        let early_velocity = early_volume / 30.0;   // SOL/detik paruh 1
-        let late_velocity  = velocity   / 30.0;   // SOL/detik paruh 2
+        // let early_velocity = early_volume / 30.0;   // SOL/detik paruh 1
+        // let late_velocity  = velocity   / 30.0;   // SOL/detik paruh 2
 
-        // Token sehat: late_velocity >= early_velocity (momentum masih tumbuh)
-        // Token pump: early_velocity >> late_velocity (sudah melambat)
-        if early_velocity > late_velocity * 1.5 {
-            info!("❌ {} Ditolak: Pump-and-Dump terdeteksi (Early Vel: {:.2}, Late Vel: {:.2})", token.symbol, early_velocity, late_velocity);
-            fail_pump = true;
-        }
+        // // Token sehat: late_velocity >= early_velocity (momentum masih tumbuh)
+        // // Token pump: early_velocity >> late_velocity (sudah melambat)
+        // if early_velocity > late_velocity * 1.5 {
+        //     info!("❌ {} Ditolak: Pump-and-Dump terdeteksi (Early Vel: {:.2}, Late Vel: {:.2})", token.symbol, early_velocity, late_velocity);
+        //     fail_pump = true;
+        // }
 
         // 7. Velocity Check
         if velocity < v_thresh {
@@ -481,14 +474,14 @@ impl FilterEngine {
         }
 
         if score.total < min_score {
-            info!("❌ {} Ditolak: Skor {:.1} < {:.1} (V:{:.0} B:{:.0} Vel:{:.0} M:{:.0} P:{:.0} L:{:.0})",
+            info!("❌ {} Ditolak: Skor {:.1} < {:.1} (V:{:.0} B:{:.0} LateVel:{:.0} M:{:.0} P:{:.0} EarlyAccel:{:.0})",
                 token.symbol, score.total, min_score,
                 score.breakdown.volume_score,
                 score.breakdown.buyers_score,
-                score.breakdown.velocity_score,
+                score.breakdown.late_velocity_score, // Renamed
                 score.breakdown.momentum_score,
                 score.breakdown.pressure_score,
-                score.breakdown.late_dominance_score,
+                score.breakdown.early_acceleration_score, // New field
             );
             fail_score = true;
         }
@@ -499,7 +492,6 @@ impl FilterEngine {
             if fail_vol         { s.rejected_volume += 1; }
             if fail_holders     { s.rejected_holders += 1; }
             if fail_mom         { s.rejected_momentum += 1; }
-            if fail_pump        { s.rejected_pump += 1; }
             if fail_vel         { s.rejected_velocity += 1; }
             if fail_extreme_vel { s.rejected_extreme_velocity += 1; }
             if fail_press       { s.rejected_pressure += 1; }
@@ -516,7 +508,7 @@ impl FilterEngine {
             }
         }
 
-        if fail_mode || fail_vol || fail_holders || fail_mom || fail_pump || fail_vel || fail_extreme_vel || fail_press || fail_score || fail_schedule {
+        if fail_mode || fail_vol || fail_holders || fail_mom || fail_vel || fail_extreme_vel || fail_press || fail_score || fail_schedule {
             self.activity_monitor.remove(&token.address);
             return false;
         }
