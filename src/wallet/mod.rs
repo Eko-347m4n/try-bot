@@ -1,2 +1,3 @@
-pub mod wallet_simulator;
-pub mod multi_wallet;
+// Modul wallet terisolasi per strategi
+// Saat ini terintegrasi langsung di dalam strategy/instance.rs (VirtualWallet)
+// File ini dibuat untuk pengembangan masa depan jika kita mengekstrak logic VirtualWallet dari instance.rs

@@ -15,7 +15,7 @@ dashmap = "5.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-uuid = { version = "1.7", features = ["v4"] }
+uuid = { version = "1.7", features = ["v4", "serde"] }
 anyhow = "1.0"
 url = "2.5"
 sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-rustls", "macros"] }

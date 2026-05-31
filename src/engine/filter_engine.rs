@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::config::StrategyParameters;
 use crate::queue::event_queue::{BotEvent, TokenData};
 use crate::state::SharedState;
@@ -540,7 +541,7 @@ impl FilterEngine {
         info!("✅ BUY SIGNAL: {} | Skor: {:.1} | Vol: {:.2} SOL | Buyers: {}", token.symbol, score.total, vol, holder_count);
             
         if let Some(notifier) = &self.notifier {
-            notifier.send_buy_alert(&token.address, velocity, holder_count as u32, score.total).await;
+            notifier.send_buy_alert("Legacy", &token.address, velocity, holder_count as u32, score.total).await;
         }
             
         self.activity_monitor.remove(&token.address);

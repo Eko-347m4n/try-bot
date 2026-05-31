@@ -48,7 +48,7 @@ impl PumpfunListener {
                                     }
                                     Ok(Some(Ok(Message::Ping(payload)))) => {
                                         let _ = self.tx.send(BotEvent::Heartbeat);
-                                        let _ = write.send(Message::Pong(payload)).await;
+                                        let _ = timeout(Duration::from_secs(5), write.send(Message::Pong(payload))).await;
                                     }
                                     Ok(None) | Ok(Some(Ok(Message::Close(_)))) => {
                                         warn!("⚠️ Koneksi ditutup oleh server.");
@@ -58,13 +58,27 @@ impl PumpfunListener {
                                         error!("⌛ WebSocket Timeout (No data for 60s). Reconnecting...");
                                         break;
                                     }
-                                    _ => {}
+                                    Ok(Some(Ok(_))) => {
+                                        // Tipe pesan lain (Binary, Pong, dll), tetap dihitung sebagai heartbeat
+                                        let _ = self.tx.send(BotEvent::Heartbeat);
+                                    }
+                                    Ok(Some(Err(e))) => {
+                                        error!("❌ Error membaca WebSocket: {}", e);
+                                        break;
+                                    }
                                 }
                             }
                             Some(cmd_text) = rx_ws.recv() => {
-                                if let Err(e) = write.send(Message::Text(cmd_text)).await {
-                                    error!("❌ Gagal kirim perintah: {}", e);
-                                    break;
+                                match timeout(Duration::from_secs(5), write.send(Message::Text(cmd_text))).await {
+                                    Ok(Err(e)) => {
+                                        error!("❌ Gagal kirim perintah (I/O error): {}", e);
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        error!("⌛ Timeout 5s saat mengirim perintah (Koneksi Zombie). Reconnecting...");
+                                        break;
+                                    }
+                                    Ok(Ok(_)) => {}
                                 }
                             }
                             Some(event) = cmd_rx.recv() => {

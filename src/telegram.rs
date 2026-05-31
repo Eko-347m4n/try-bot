@@ -12,7 +12,9 @@ pub struct TelegramNotifier {
     chat_id: ChatId,
 }
 
+#[allow(dead_code)]
 pub struct TradeResult {
+    pub strategy_id: String,
     pub token_addr: String,
     pub pnl_pct: f64,
     pub hold_secs: i64,
@@ -27,14 +29,16 @@ impl TelegramNotifier {
         Self { bot, chat_id }
     }
 
+    #[allow(dead_code)]
     pub async fn send_trade_alert(&self, trade: &TradeResult) {
         let emoji = if trade.pnl_pct > 0.0 { "✅" } else { "🔻" };
         let msg = format!(
-            "📦 *TRADE CLOSED*\n\n\
+            "📦 *TRADE CLOSED [{}]*\n\n\
              Token: `{}`\n\
              Result: *{} {} {:.2}%*\n\
              Hold Time: *{}s*\n\n\
-             📈 *Session ROI:* `{:.2}%` bersih",
+             📈 *Strategy ROI:* `{:.2}%` bersih",
+            trade.strategy_id,
             trade.token_addr,
             trade.exit_type, emoji, trade.pnl_pct,
             trade.hold_secs,
@@ -45,15 +49,16 @@ impl TelegramNotifier {
             .await.ok();
     }
 
-    pub async fn send_buy_alert(&self, token: &str, velocity: f64, buyers: u32, score: f64) {
+    #[allow(dead_code)]
+    pub async fn send_buy_alert(&self, strategy_id: &str, token: &str, velocity: f64, buyers: u32, score: f64) {
         let msg = format!(
-            "🚀 *VIRTUAL BUY SIGNAL*\n\n\
+            "🚀 *VIRTUAL BUY [{}]*\n\n\
              Token: `{}`\n\
-             Score: *{:.1}/10*\n\
+             Score: *{:.1}/100*\n\
              Velocity: `{:.2}` SOL/30s\n\
              Buyers: `{}`\n\n\
              [Pump.fun](https://pump.fun/{}) | [DexS](https://dexscreener.com/solana/{})",
-            token, score, velocity, buyers, token, token
+            strategy_id, token, score, velocity, buyers, token, token
         );
         self.bot.send_message(self.chat_id, msg)
             .parse_mode(teloxide::types::ParseMode::MarkdownV2)
@@ -119,8 +124,11 @@ pub async fn start_command_handler(bot_token: String, state: SharedState, db: Sq
         );
     
     tokio::spawn(async move {
-        Dispatcher::builder(bot, handler)
+        teloxide::dispatching::Dispatcher::builder(bot, handler)
             .dependencies(dptree::deps![state, db])
+            .error_handler(teloxide::error_handlers::LoggingErrorHandler::with_custom_text(
+                "Teloxide error (mengabaikan TerminatedByOtherGetUpdates jika ada instance ganda yang berjalan)"
+            ))
             .build()
             .dispatch()
             .await;
@@ -139,57 +147,111 @@ async fn answer(bot: Bot, msg: Message, cmd: Command, state: SharedState, db: Sq
                 "Unknown".to_string()
             };
             
-            let response = format!(
-                "<b>🤖 STATUS BOT</b>\n\n\
+            let mut response = format!(
+                "<b>🤖 STATUS BOT (MULTI-STRATEGY)</b>\n\n\
                  Status: <b>{}</b>\n\
                  Regime: <code>{:?}</code>\n\
-                 Uptime: <code>{}</code>\n\n\
-                 💰 <b>Portfolio (Net):</b>\n\
-                 Balance: <code>{:.3} SOL</code>\n\
-                 Bersih: <code>{:.2}% ROI</code>\n\n\
-                 📊 <b>Performance:</b>\n\
-                 Trades: <code>{}</code>\n\
-                 Win Rate: <code>{:.1}%</code>\n\
-                 Active: <code>{} pos</code>", 
-                status_emoji, s.market_ctx.regime, uptime,
-                s.virtual_balance, s.total_roi_pct(),
-                s.total_trades, 
-                if s.total_trades > 0 { (s.tp_hits as f64 / s.total_trades as f64) * 100.0 } else { 0.0 }, 
-                s.active_positions
+                 Uptime: <code>{}</code>\n\n",
+                status_emoji, s.market_ctx.regime, uptime
             );
+
+            if s.strategy_statuses.is_empty() {
+                response.push_str("<i>Belum ada strategi yang aktif.</i>");
+            } else {
+                for stat in &s.strategy_statuses {
+                    let short_id = if stat.id.len() > 15 { &stat.id[..15] } else { &stat.id };
+                    response.push_str(&format!(
+                        "📌 <b>{}</b>\n\
+                         • Equity: <b>{:.3} SOL</b>\n\
+                         • Bal: <code>{:.2} SOL</code> | ROI: <code>{:.1}%</code>\n\
+                         • WR: <code>{:.1}%</code> | Trades: <code>{}</code>\n\
+                         • Pos: <code>{} active</code>\n\
+                         • Exit: <code>+{:.0}% / -{:.0}%</code>\n\n",
+                        short_id, stat.total_equity, stat.balance, 
+                        (stat.realized_pnl / 1.0) * 100.0,
+                        stat.win_rate, stat.trade_count, stat.active_positions,
+                        (stat.tp_multiplier - 1.0) * 100.0,
+                        (1.0 - stat.sl_multiplier) * 100.0
+                    ));
+                }
+            }
+
             bot.send_message(msg.chat.id, response).parse_mode(teloxide::types::ParseMode::Html).await?;
         }
         Command::Report => {
             let s = state.lock().await;
-            let wr = if s.total_trades > 0 { (s.tp_hits as f64 / s.total_trades as f64) * 100.0 } else { 0.0 };
-            let response = format!(
-                "📊 <b>SUMMARY LAPORAN SESI</b>\n\n\
-                 ROI Bersih: <b>{:.2}%</b>\n\
-                 Win Rate: <b>{:.1}%</b>\n\n\
-                 ✅ TP Hits: <code>{}</code>\n\
-                 🔻 SL Hits: <code>{}</code>\n\
-                 🔄 Total Trade: <code>{}</code>",
-                s.total_roi_pct(), wr, s.tp_hits, s.sl_hits, s.total_trades
-            );
+            let mut response = format!("📊 <b>SUMMARY LAPORAN MULTI-STRATEGY</b>\n\n");
+
+            if s.strategy_statuses.is_empty() {
+                response.push_str("<i>Tidak ada data untuk dilaporkan.</i>");
+            } else {
+                for stat in &s.strategy_statuses {
+                    response.push_str(&format!(
+                        "📂 <b>{}</b>\n\
+                         • Equity: <b>{:.3} SOL</b>\n\
+                         • ROI: <b>{:.2}%</b>\n\
+                         • Win Rate: <b>{:.1}%</b>\n\
+                         • Total Trades: <code>{}</code>\n\
+                         • Cash: <code>{:.3} SOL</code>\n\n",
+                        stat.id, 
+                        stat.total_equity,
+                        (stat.realized_pnl / 1.0) * 100.0,
+                        stat.win_rate, stat.trade_count, stat.balance
+                    ));
+                }
+            }
+
             bot.send_message(msg.chat.id, response).parse_mode(teloxide::types::ParseMode::Html).await?;
         }
         Command::Filter => {
+            use sqlx::Row;
             let s = state.lock().await;
-            let response = format!(
-                "🔍 <b>STATISTIK FILTER</b>\n\n\
-                 Scanned: <code>{}</code>\n\
-                 Passed: <b>{}</b>\n\n\
-                 <b>Rejection Reasons:</b>\n\
-                 - Volume: <code>{}</code>\n\
-                 - Holders: <code>{}</code>\n\
-                 - Momentum: <code>{}</code>\n\
-                 - Velocity: <code>{}</code>\n\
-                 - Score: <code>{}</code>",
-                s.tokens_scanned, s.passed_filter,
-                s.rejected_volume, s.rejected_holders,
-                s.rejected_momentum, s.rejected_velocity,
-                s.rejected_score
-            );
+            let active_ids: Vec<String> = s.strategy_statuses.iter().map(|stat| stat.id.clone()).collect();
+            let session_start = s.session_start_utc.to_rfc3339();
+            drop(s);
+
+            let rows = sqlx::query(
+                r#"SELECT strategy_id, 
+                          COUNT(*) as total, 
+                          SUM(CASE WHEN final_decision = 'BUY' THEN 1 ELSE 0 END) as buys 
+                   FROM decision_traces 
+                   WHERE timestamp >= ?
+                   GROUP BY strategy_id"#
+            )
+            .bind(session_start)
+            .fetch_all(&db)
+            .await;
+
+            let mut response = "🔍 <b>STATISTIK FILTER PER STRATEGI</b>\n\n".to_string();
+
+            if let Ok(rows) = rows {
+                let mut has_data = false;
+                for row in rows {
+                    let id: String = row.get(0);
+                    if !active_ids.contains(&id) {
+                        continue;
+                    }
+                    has_data = true;
+                    let total: i64 = row.get(1);
+                    let buys: i64 = row.get(2);
+                    let rejected = total - buys;
+                    let pass_rate = if total > 0 { (buys as f64 / total as f64) * 100.0 } else { 0.0 };
+                    
+                    response.push_str(&format!(
+                        "🛡️ <b>{}</b>\n\
+                         • Scanned: <code>{}</code>\n\
+                         • Passed: <b>{}</b> (<code>{:.1}%</code>)\n\
+                         • Rejected: <code>{}</code>\n\n",
+                        id, total, buys, pass_rate, rejected
+                    ));
+                }
+                if !has_data {
+                    response.push_str("<i>Belum ada data evaluasi token untuk strategi aktif.</i>");
+                }
+            } else {
+                response.push_str("❌ Gagal mengambil data filter dari database.");
+            }
+
             bot.send_message(msg.chat.id, response).parse_mode(teloxide::types::ParseMode::Html).await?;
         }
         Command::Pause => {

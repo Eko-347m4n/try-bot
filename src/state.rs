@@ -1,8 +1,11 @@
 use crate::engine::market_context::MarketContext;
+use crate::strategy::instance::StrategyStatus;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::time::Instant;
+use chrono::{DateTime, Utc};
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct SessionState {
     pub is_running: bool,
@@ -13,6 +16,7 @@ pub struct SessionState {
     pub total_pnl_pct: f64,
     pub active_positions: u32,
     pub started_at: Option<Instant>,
+    pub session_start_utc: DateTime<Utc>,
     pub initial_balance: f64,
     pub virtual_balance: f64,
     pub last_ws_event: Instant,
@@ -45,6 +49,7 @@ pub struct SessionState {
     // parameters
     pub volume_threshold: f64,
     pub velocity_threshold: f64,
+    pub strategy_statuses: Vec<StrategyStatus>,
 }
 
 impl SessionState {
@@ -74,6 +79,7 @@ impl Default for SessionState {
             total_pnl_pct: 0.0,
             active_positions: 0,
             started_at: Some(Instant::now()),
+            session_start_utc: Utc::now(),
             initial_balance: 1.0, // Start with 1.0 SOL
             virtual_balance: 1.0, // Start with 1.0 SOL
             last_ws_event: Instant::now(),
@@ -102,6 +108,7 @@ impl Default for SessionState {
             passed_filter: 0,
             volume_threshold: 3.0,
             velocity_threshold: 0.5,
+            strategy_statuses: Vec::new(),
         }
     }
 }

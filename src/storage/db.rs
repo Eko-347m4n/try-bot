@@ -31,6 +31,8 @@ pub async fn init_db(path: &str) -> SqlitePool {
         .await
         .expect("Gagal koneksi SQLite");
 
+    sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await.unwrap();
+
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS trades (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,9 +85,28 @@ pub async fn init_db(path: &str) -> SqlitePool {
         )"
     ).execute(&pool).await.unwrap();
 
+    // TABEL BARU UNTUK MULTI-STRATEGY TRACING
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS decision_traces (
+            trace_id        TEXT PRIMARY KEY,
+            strategy_id     TEXT NOT NULL,
+            token_addr      TEXT NOT NULL,
+            timestamp       TEXT NOT NULL,
+            filters_json    TEXT NOT NULL,
+            final_decision  TEXT NOT NULL
+        )"
+    ).execute(&pool).await.unwrap();
+
+    // Migrasi Skema Lama (tambahkan strategy_id jika belum ada)
+    let _ = sqlx::query("ALTER TABLE trades ADD COLUMN strategy_id TEXT DEFAULT 'Legacy'").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE window_stats ADD COLUMN strategy_id TEXT DEFAULT 'Legacy'").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE open_positions ADD COLUMN strategy_id TEXT DEFAULT 'Legacy'").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE virtual_topups ADD COLUMN strategy_id TEXT DEFAULT 'Legacy'").execute(&pool).await;
+
     pool
 }
 
+#[allow(dead_code)]
 pub async fn insert_open_position(pool: &SqlitePool, t: &TradeRecord) {
     sqlx::query(
         "INSERT OR REPLACE INTO open_positions
@@ -194,6 +215,7 @@ pub async fn query_win_rate_last_n(pool: &SqlitePool, n: i64) -> f64 {
     row.map(|r| r.0).unwrap_or(0.0)
 }
 
+#[allow(dead_code)]
 pub async fn query_tp_rate_last_hour(pool: &SqlitePool) -> f64 {
     let row: Option<(f64,)> = sqlx::query_as(
         "SELECT CAST(SUM(CASE WHEN exit_type='TP' THEN 1 ELSE 0 END) AS REAL) / COUNT(*)
@@ -204,6 +226,7 @@ pub async fn query_tp_rate_last_hour(pool: &SqlitePool) -> f64 {
     row.map(|r| r.0).unwrap_or(0.0)
 }
 
+#[allow(dead_code)]
 pub async fn insert_window_stats(
     pool: &SqlitePool,
     scanned: i32,
@@ -233,6 +256,7 @@ pub async fn insert_window_stats(
     }
 }
 
+#[allow(dead_code)]
 pub async fn insert_virtual_topup(pool: &SqlitePool, amount_added: f64, balance_after: f64) {
     let now = Utc::now().to_rfc3339();
     sqlx::query(

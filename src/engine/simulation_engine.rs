@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::queue::event_queue::BotEvent;
 use crate::state::SharedState;
 use crate::storage::db::{self, TradeRecord};
@@ -287,6 +288,7 @@ impl SimulationEngine {
 
             if let Some(notifier) = &self.notifier {
                 notifier.send_trade_alert(&TradeResult {
+                    strategy_id: "Legacy".to_string(),
                     token_addr: address,
                     pnl_pct: net_pnl_percent,
                     hold_secs: hold_time,

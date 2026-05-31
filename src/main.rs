@@ -1,7 +1,10 @@
 mod analytics;
+mod broker;
 mod config;
+mod core;
 mod engine;
 mod queue;
+mod strategy;
 mod stream;
 mod tracker;
 mod utils;
@@ -11,8 +14,6 @@ mod storage;
 mod telegram;
 
 use crate::config::{BotConfig, StrategyParameters};
-use crate::engine::filter_engine::FilterEngine;
-use crate::engine::simulation_engine::SimulationEngine;
 use crate::engine::rolling_stats::MarketSnapshot;
 use crate::engine::dynamic_config::{DynamicConfig, SharedConfig};
 use crate::stream::pumpfun_listener::PumpfunListener;
@@ -59,6 +60,9 @@ async fn main() -> Result<()> {
     // Initialize DB
     let db_path = std::env::var("DATABASE_PATH").unwrap_or_else(|_| "trades.db".to_string());
     let db_pool = db::init_db(&db_path).await;
+
+    let analytics = crate::analytics::engine::AnalyticsEngine::new(db_pool.clone());
+    analytics.print_performance_report().await;
 
     // Initialize Telegram Notifier (optional if keys not set)
     let telegram_token = std::env::var("TELOXIDE_TOKEN").unwrap_or_default();
@@ -201,13 +205,22 @@ async fn main() -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let (listener_tx, listener_rx) = mpsc::unbounded_channel();
 
-    let mut filter_engine = FilterEngine::new(
-        strategy_params, tx.clone(), shared_state.clone(), notifier.clone(),
-        shared_config.clone(), db_pool.clone()
-    );
+    let (trace_tx, trace_rx) = mpsc::channel(10000);
     
-    let mut simulation_engine = SimulationEngine::new(
-        tx.clone(), shared_state.clone(), db_pool.clone(), notifier.clone()
+    // Setup Async Batch Worker untuk SQLite Trace Logging
+    let batch_worker = crate::storage::batch_worker::BatchWorker::new(db_pool.clone(), trace_rx);
+    tokio::spawn(async move {
+        batch_worker.run().await;
+    });
+
+    let mut dispatcher = crate::engine::dispatcher::Dispatcher::new(
+        crate::strategy::builder::StrategyBuilder::build_all(notifier.clone())
+            .into_iter()
+            .map(|s| Box::new(s) as Box<dyn crate::strategy::instance::Strategy>)
+            .collect(),
+        trace_tx,
+        tx.clone(),
+        strategy_params
     );
 
     let listener = PumpfunListener::new(bot_config.websocket_url, tx.clone(), notifier.clone());
@@ -221,18 +234,31 @@ async fn main() -> Result<()> {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("Sinyal shutdown diterima. Menghentikan bot...");
-                simulation_engine.process_event(BotEvent::SessionEnd).await;
+                // Note: SessionEnd event should still be handled, but in Multi-Strategy
+                // it might just gracefully shutdown. For now, break directly.
                 break;
             }
             Some(event) = rx.recv() => {
+                // Update timestamp last event received
+                {
+                    let mut s = shared_state.lock().await;
+                    s.last_ws_event = std::time::Instant::now();
+                }
+
                 if let BotEvent::Unsubscribe(_) = &event {
                     let _ = listener_tx.send(event);
                     continue;
                 }
 
                 let is_session_end = matches!(event, BotEvent::SessionEnd);
-                filter_engine.process_event(event.clone()).await;
-                simulation_engine.process_event(event).await;
+                dispatcher.process_event(event);
+                
+                // Update shared state with latest strategy statuses
+                {
+                    let mut s = shared_state.lock().await;
+                    s.strategy_statuses = dispatcher.get_strategy_statuses();
+                }
+
                 if is_session_end { break; }
             }
         }
