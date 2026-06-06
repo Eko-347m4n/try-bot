@@ -61,11 +61,8 @@ pub struct StrategyInstance {
     pub wallet: VirtualWallet,
     pub notifier: Option<TelegramNotifier>,
     
-    // Simplifikasi simulasi posisi: token_addr -> (entry_price, size_sol, entry_time)
-    pub open_positions: std::collections::HashMap<String, (f64, f64, u64)>,
-    
-    // Bootstrap mode handling
-    pub bootstrap_enabled: bool,
+    // Simplifikasi simulasi posisi: token_addr -> (entry_price, size_sol, entry_time, highest_price)
+    pub open_positions: std::collections::HashMap<String, (f64, f64, u64, f64)>,
 }
 
 impl Strategy for StrategyInstance {
@@ -89,7 +86,7 @@ impl Strategy for StrategyInstance {
 
     fn get_status(&self) -> StrategyStatus {
         let (tp, sl) = self.exit.get_tp_sl();
-        let open_positions_value: f64 = self.open_positions.values().map(|&(_, size, _)| size).sum();
+        let open_positions_value: f64 = self.open_positions.values().map(|&(_, size, _, _)| size).sum();
         let total_equity = self.wallet.balance + open_positions_value;
 
         StrategyStatus {
@@ -107,13 +104,17 @@ impl Strategy for StrategyInstance {
 
     fn check_timeouts(&mut self, activities: &std::collections::HashMap<String, TokenActivity>, trace_tx: &mpsc::Sender<TraceRecord>) {
         let mut to_close = Vec::new();
-        for (addr, (entry_price, _size_sol, entry_time)) in &self.open_positions {
+        for (addr, (entry_price, _size_sol, entry_time, highest_price)) in self.open_positions.iter_mut() {
             let elapsed = (Utc::now().timestamp() as u64).saturating_sub(*entry_time);
             
             // Ambil harga terbaru dari activities map jika ada, jika tidak gunakan entry_price (asumsi harga tetap)
             let current_price = activities.get(addr).map(|a| a.latest_price).unwrap_or(*entry_price);
             
-            if let Some(decision) = self.exit.evaluate_exit(*entry_price, current_price, elapsed) {
+            if current_price > *highest_price {
+                *highest_price = current_price;
+            }
+
+            if let Some(decision) = self.exit.evaluate_exit(*entry_price, current_price, *highest_price, elapsed) {
                 to_close.push((addr.clone(), current_price, decision));
             }
         }
@@ -183,30 +184,31 @@ impl StrategyInstance {
     }
 
     fn execute_buy(&mut self, token: &TokenData, current_price: f64) {
-        let size_sol = if self.bootstrap_enabled && self.wallet.trade_count < 5 {
-            0.05
-        } else {
-            0.1
-        };
+        // Terapkan ukuran posisi statis 0.05 SOL untuk memperpanjang daya tahan (Risk of Ruin)
+        let size_sol = 0.05;
 
         let (effective_entry, total_cost) = self.broker.calculate_entry(current_price, size_sol);
         
-        // Auto-topup simulasi jika kurang
+        // Hard stop: Jika saldo tidak cukup untuk biaya transaksi, batalkan eksekusi
         if self.wallet.balance < total_cost {
-            self.wallet.balance += 1.0;
+            tracing::warn!("[{}] Saldo tidak mencukupi untuk buy {}. Balance: {:.3}, Cost: {:.3}", self.id(), token.address, self.wallet.balance, total_cost);
+            return;
         }
 
         self.wallet.balance -= total_cost;
         self.wallet.trade_count += 1;
         
         info!("[{}] 🟢 VIRTUAL BUY: {} | Balance: {:.3} SOL", self.id(), token.address, self.wallet.balance);
-        self.open_positions.insert(token.address.clone(), (effective_entry, size_sol, Utc::now().timestamp() as u64));
+        self.open_positions.insert(token.address.clone(), (effective_entry, size_sol, Utc::now().timestamp() as u64, current_price));
     }
 
     fn evaluate_open_positions(&mut self, token_address: &str, current_price: f64, trace_tx: &mpsc::Sender<TraceRecord>) {
-        let exit_decision = if let Some(&(entry_price, _, entry_time)) = self.open_positions.get(token_address) {
-            let elapsed = (Utc::now().timestamp() as u64).saturating_sub(entry_time);
-            let dec = self.exit.evaluate_exit(entry_price, current_price, elapsed);
+        let exit_decision = if let Some((entry_price, _, entry_time, highest_price)) = self.open_positions.get_mut(token_address) {
+            if current_price > *highest_price {
+                *highest_price = current_price;
+            }
+            let elapsed = (Utc::now().timestamp() as u64).saturating_sub(*entry_time);
+            let dec = self.exit.evaluate_exit(*entry_price, current_price, *highest_price, elapsed);
             if dec.is_some() {
                 info!("[{}] 🔴 EXIT DETECTED for {}: {:?} | Price: {:.10} | Elapsed: {}s", self.id(), token_address, dec, current_price, elapsed);
             }
@@ -221,7 +223,7 @@ impl StrategyInstance {
     }
 
     fn close_position(&mut self, token_address: &str, current_price: f64, decision: ExitDecision, trace_tx: &mpsc::Sender<TraceRecord>) {
-        if let Some((entry_price, size_sol, entry_time)) = self.open_positions.remove(token_address) {
+        if let Some((entry_price, size_sol, entry_time, _highest)) = self.open_positions.remove(token_address) {
             let net_return = self.broker.calculate_net_return(&decision, entry_price, current_price, size_sol);
             self.wallet.balance += net_return;
             

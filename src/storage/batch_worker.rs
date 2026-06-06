@@ -7,11 +7,12 @@ use chrono::Utc;
 pub struct BatchWorker {
     pool: SqlitePool,
     rx: mpsc::Receiver<TraceRecord>,
+    flush_count: u32,
 }
 
 impl BatchWorker {
     pub fn new(pool: SqlitePool, rx: mpsc::Receiver<TraceRecord>) -> Self {
-        Self { pool, rx }
+        Self { pool, rx, flush_count: 0 }
     }
 
     pub async fn run(mut self) {
@@ -49,7 +50,7 @@ impl BatchWorker {
         }
     }
 
-    async fn flush(&self, buffer: &mut Vec<TraceRecord>) {
+    async fn flush(&mut self, buffer: &mut Vec<TraceRecord>) {
         // Karena SQLite lebih efisien dengan transaksi manual
         let mut tx = match self.pool.begin().await {
             Ok(tx) => tx,
@@ -110,6 +111,16 @@ impl BatchWorker {
         } else {
             // Berhasil flush
             buffer.clear();
+            self.flush_count += 1;
+
+            // Jalankan Explicit Checkpoint setiap 10 kali flush untuk mencegah korupsi WAL
+            if self.flush_count % 10 == 0 {
+                if let Err(e) = sqlx::query("PRAGMA wal_checkpoint(FULL);").execute(&self.pool).await {
+                    error!("Gagal menjalankan PRAGMA wal_checkpoint: {}", e);
+                } else {
+                    info!("SQLite WAL Checkpoint berhasil dijalankan.");
+                }
+            }
         }
     }
 }

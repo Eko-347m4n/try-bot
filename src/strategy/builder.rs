@@ -50,7 +50,6 @@ impl StrategyBuilder {
             wallet: VirtualWallet::default(),
             notifier,
             open_positions: std::collections::HashMap::new(),
-            bootstrap_enabled: false,
         }
     }
 
@@ -86,7 +85,6 @@ impl StrategyBuilder {
             wallet: VirtualWallet::default(),
             notifier,
             open_positions: std::collections::HashMap::new(),
-            bootstrap_enabled: true, // aktif
         }
     }
 
@@ -145,6 +143,44 @@ impl StrategyBuilder {
         instance
     }
 
+    pub fn build_foxtrot(notifier: Option<TelegramNotifier>) -> StrategyInstance {
+        let mut instance = Self::build_20260515(notifier); // Base: Alpha
+        instance.strategy_id = "Foxtrot".to_string();
+        
+        // Perketat Score Filter ke 100.0 (Elite Selection)
+        for filter in &mut instance.filters {
+            if filter.name() == "ScoreFilter" {
+                // Catatan: Karena filter disimpan sebagai Trait Object, kita tidak bisa merubah field internalnya secara langsung
+                // tanpa casting atau re-create. Untuk akurasi, kita re-create filter list-nya.
+            }
+        }
+
+        // Re-build filters khusus Foxtrot
+        let mut filters: Vec<Box<dyn TokenFilter>> = Vec::new();
+        filters.push(Box::new(VolumeFilter { min_volume_sol: 3.0 }));
+        filters.push(Box::new(BuyersFilter { min_buyers: 6 }));
+        filters.push(Box::new(ScoreFilter {
+            config: ScoreConfig {
+                volume_thresh: 3.0,
+                buyers_thresh: 6,
+                velocity_thresh: 1.5,
+                min_score: 100.0, // Parameter yang diminta: 100
+                enable_early_acceleration_bias: true,
+            }
+        }));
+        instance.filters = filters;
+        
+        // Ganti dengan Trailing Exit
+        instance.exit = Box::new(super::exit::trailing_tp_sl::TrailingTpSlExit {
+            activation_multiplier: 1.15, // Aktif di +15%
+            trailing_percent: 0.025,     // Trailing 2.5%
+            sl_multiplier: 0.92,         // -8%
+            timeout_secs: 30,            // Durasi cut diperketat ke 30s
+        });
+
+        instance
+    }
+
     // Builder utama yang menjalankan semua
     pub fn build_all(notifier: Option<TelegramNotifier>) -> Vec<StrategyInstance> {
         vec![
@@ -152,7 +188,8 @@ impl StrategyBuilder {
             Self::build_20260517(notifier.clone()),
             Self::build_20260523(notifier.clone()),
             Self::build_20260524(notifier.clone()),
-            Self::build_20260527(notifier),
+            Self::build_20260527(notifier.clone()),
+            Self::build_foxtrot(notifier),
         ]
     }
 }

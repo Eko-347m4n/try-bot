@@ -209,7 +209,7 @@ async fn main() -> Result<()> {
     
     // Setup Async Batch Worker untuk SQLite Trace Logging
     let batch_worker = crate::storage::batch_worker::BatchWorker::new(db_pool.clone(), trace_rx);
-    tokio::spawn(async move {
+    let db_worker_handle = tokio::spawn(async move {
         batch_worker.run().await;
     });
 
@@ -234,8 +234,6 @@ async fn main() -> Result<()> {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("Sinyal shutdown diterima. Menghentikan bot...");
-                // Note: SessionEnd event should still be handled, but in Multi-Strategy
-                // it might just gracefully shutdown. For now, break directly.
                 break;
             }
             Some(event) = rx.recv() => {
@@ -263,6 +261,10 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    info!("Menunggu database worker selesai flushing sisa data...");
+    let _ = db_worker_handle.await;
+    info!("Bot berhenti dengan bersih.");
 
     Ok(())
 }

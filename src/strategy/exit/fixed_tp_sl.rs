@@ -8,7 +8,7 @@ pub struct FixedTpSlExit {
 }
 
 impl ExitStrategy for FixedTpSlExit {
-    fn evaluate_exit(&self, entry_price: f64, current_price: f64, elapsed_secs: u64) -> Option<ExitDecision> {
+    fn evaluate_exit(&self, entry_price: f64, current_price: f64, _highest_price: f64, elapsed_secs: u64) -> Option<ExitDecision> {
         let tp_target = entry_price * self.tp_multiplier;
         let sl_target = entry_price * self.sl_multiplier;
 
