@@ -1,8 +1,8 @@
-use crate::queue::event_queue::TokenData;
-use crate::engine::market_context::MarketContext;
-use crate::core::types::FilterResult;
-use crate::core::events::TokenActivity;
 use super::TokenFilter;
+use crate::core::events::TokenActivity;
+use crate::core::types::FilterResult;
+use crate::engine::market_context::MarketContext;
+use crate::queue::event_queue::TokenData;
 
 pub struct VelocityFilter {
     pub min_velocity_sol: f64,
@@ -23,10 +23,7 @@ impl TokenFilter for VelocityFilter {
                 reason: format!("Velocity {:.2} < {:.2}", velocity, self.min_velocity_sol),
             }
         } else {
-            FilterResult {
-                passed: true,
-                reason: "OK".to_string(),
-            }
+            FilterResult { passed: true, reason: "OK".to_string() }
         }
     }
 }

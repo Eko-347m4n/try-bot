@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +42,9 @@ pub struct TradeTrace {
     pub pnl_pct: f64,
     pub exit_type: String,
     pub hold_secs: i64,
+    pub gross_pnl_sol: f64,
+    pub fees_paid_sol: f64,
+    pub realized_net_sol: f64,
 }
 
 #[derive(Debug, Clone)]

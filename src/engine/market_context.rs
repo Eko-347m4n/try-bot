@@ -1,29 +1,29 @@
 use std::collections::VecDeque;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MarketRegime {
-    Hot,      // Sangat aktif, momentum kuat
-    Normal,   // Kondisi standar
-    Cooling,  // Mulai lesu
-    Cold,     // Tidak kondusif, pause
-    Unknown,  // Data belum cukup
+    Hot,     // Sangat aktif, momentum kuat
+    Normal,  // Kondisi standar
+    Cooling, // Mulai lesu
+    Cold,    // Tidak kondusif, pause
+    Unknown, // Data belum cukup
 }
 
 #[derive(Debug, Clone)]
 pub struct MarketContext {
     // Data mentah - rolling window
-    token_births:      VecDeque<Instant>,
-    all_velocities:    VecDeque<f64>,
-    momentum_results:  VecDeque<bool>, // true=lolos, false=rejected
+    token_births: VecDeque<Instant>,
+    all_velocities: VecDeque<f64>,
+    momentum_results: VecDeque<bool>, // true=lolos, false=rejected
 
     // Metrik terhitung
-    pub birth_rate_5m:      f64,
-    pub global_velocity:    f64,
+    pub birth_rate_5m: f64,
+    pub global_velocity: f64,
     pub momentum_fail_rate: f64,
-    pub tp_rate_1h:         f64,
-    pub regime:             MarketRegime,
+    pub tp_rate_1h: f64,
+    pub regime: MarketRegime,
 }
 
 impl Default for MarketContext {
@@ -75,7 +75,7 @@ impl MarketContext {
 
     pub fn update_metrics(&mut self, tp_rate: f64) {
         self.cleanup_births();
-        
+
         // Birth rate per menit (5m window)
         self.birth_rate_5m = self.token_births.len() as f64 / 5.0;
 
@@ -102,7 +102,7 @@ impl MarketContext {
 
     fn update_regime(&mut self) {
         // FIX 3: Safeguard & Mechanism Reset
-        // Butuh minimal data sebelum bisa menilai secara akurat. 
+        // Butuh minimal data sebelum bisa menilai secara akurat.
         // Jika data sangat sedikit, gunakan Unknown (yang akan men-trigger Normal_Relaxed di config)
         if self.token_births.len() < 10 || self.momentum_results.len() < 5 {
             self.regime = MarketRegime::Unknown;
@@ -115,24 +115,30 @@ impl MarketContext {
         match self.birth_rate_5m {
             r if r > 40.0 => score += 2,
             r if r > 20.0 => score += 1,
-            r if r > 5.0  => { score += 0; },
-            _             => score -= 2,
+            r if r > 5.0 => {
+                score += 0;
+            }
+            _ => score -= 2,
         }
 
         // Global velocity scoring
         match self.global_velocity {
             v if v > 1.2 => score += 2,
             v if v > 0.7 => score += 1,
-            v if v > 0.3 => { score += 0; },
-            _            => score -= 2,
+            v if v > 0.3 => {
+                score += 0;
+            }
+            _ => score -= 2,
         }
 
         // Momentum fail rate scoring — DILONGGARKAN (sebelumnya sangat keras)
         match self.momentum_fail_rate {
             r if r < 0.5 => score += 2,
             r if r < 0.7 => score += 1,
-            r if r < 0.85 => { score -= 1; },
-            _            => score -= 2,
+            r if r < 0.85 => {
+                score -= 1;
+            }
+            _ => score -= 2,
         }
 
         // TP Rate scoring (hanya jika ada data trade)
@@ -141,25 +147,21 @@ impl MarketContext {
                 r if r > 0.40 => score += 2,
                 r if r > 0.30 => score += 1,
                 r if r > 0.20 => score -= 1,
-                _             => score -= 2,
+                _ => score -= 2,
             }
         }
 
         // Final Regime Decision dengan bantalan (padding)
         let regime = match score {
-            s if s >= 3  => MarketRegime::Hot,
-            s if s >= 0  => MarketRegime::Normal,
+            s if s >= 3 => MarketRegime::Hot,
+            s if s >= 0 => MarketRegime::Normal,
             s if s >= -2 => MarketRegime::Cooling,
-            _            => MarketRegime::Cold,
+            _ => MarketRegime::Cold,
         };
 
         warn!(
             "[REGIME] score={}, global_vel={:.4}, birth={:.2}, mom_fail={:.2}, result={:?}",
-            score,
-            self.global_velocity,
-            self.birth_rate_5m,
-            self.momentum_fail_rate,
-            regime
+            score, self.global_velocity, self.birth_rate_5m, self.momentum_fail_rate, regime
         );
 
         self.regime = regime;

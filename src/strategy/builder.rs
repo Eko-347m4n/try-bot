@@ -1,36 +1,37 @@
-use super::instance::{StrategyInstance, VirtualWallet};
-use crate::telegram::TelegramNotifier;
+use super::exit::fixed_tp_sl::FixedTpSlExit;
 use super::filter::{
-    volume::VolumeFilter,
-    liquidity::LiquidityFilter,
     blackout::BlackoutFilter,
-    spike::SpikeFilter,
-    regime::RegimeFilter,
     buyers::BuyersFilter,
-    score::{ScoreFilter, ScoreConfig},
+    liquidity::LiquidityFilter,
+    regime::RegimeFilter,
+    score::{ScoreConfig, ScoreFilter},
+    spike::SpikeFilter,
     velocity::VelocityFilter,
+    volume::VolumeFilter,
     TokenFilter,
 };
-use super::exit::fixed_tp_sl::FixedTpSlExit;
+use super::instance::{StrategyInstance, VirtualWallet};
 use crate::broker::simulator::RealisticBroker;
 use crate::engine::market_context::MarketRegime;
+use crate::telegram::TelegramNotifier;
 
 pub struct StrategyBuilder;
 
 impl StrategyBuilder {
     pub fn build_20260515(notifier: Option<TelegramNotifier>) -> StrategyInstance {
-        let mut filters: Vec<Box<dyn TokenFilter>> = Vec::new();
-        filters.push(Box::new(VolumeFilter { min_volume_sol: 3.0 })); // Anggap default thresh 3.0
-        filters.push(Box::new(BuyersFilter { min_buyers: 6 }));
-        filters.push(Box::new(ScoreFilter {
-            config: ScoreConfig {
-                volume_thresh: 3.0,
-                buyers_thresh: 6,
-                velocity_thresh: 1.5,
-                min_score: 65.0,
-                enable_early_acceleration_bias: false,
-            }
-        }));
+        let filters: Vec<Box<dyn TokenFilter>> = vec![
+            Box::new(VolumeFilter { min_volume_sol: 3.0 }),
+            Box::new(BuyersFilter { min_buyers: 6 }),
+            Box::new(ScoreFilter {
+                config: ScoreConfig {
+                    volume_thresh: 3.0,
+                    buyers_thresh: 6,
+                    velocity_thresh: 1.5,
+                    min_score: 65.0,
+                    enable_early_acceleration_bias: false,
+                },
+            }),
+        ];
 
         StrategyInstance {
             strategy_id: "Alpha".to_string(),
@@ -54,18 +55,19 @@ impl StrategyBuilder {
     }
 
     pub fn build_20260517(notifier: Option<TelegramNotifier>) -> StrategyInstance {
-        let mut filters: Vec<Box<dyn TokenFilter>> = Vec::new();
-        filters.push(Box::new(VolumeFilter { min_volume_sol: 3.0 }));
-        filters.push(Box::new(BuyersFilter { min_buyers: 6 }));
-        filters.push(Box::new(ScoreFilter {
-            config: ScoreConfig {
-                volume_thresh: 3.0,
-                buyers_thresh: 6,
-                velocity_thresh: 1.5,
-                min_score: 60.0, // diturunkan ke 60
-                enable_early_acceleration_bias: true, // bias aktif
-            }
-        }));
+        let filters: Vec<Box<dyn TokenFilter>> = vec![
+            Box::new(VolumeFilter { min_volume_sol: 3.0 }),
+            Box::new(BuyersFilter { min_buyers: 6 }),
+            Box::new(ScoreFilter {
+                config: ScoreConfig {
+                    volume_thresh: 3.0,
+                    buyers_thresh: 6,
+                    velocity_thresh: 1.5,
+                    min_score: 60.0,                      // diturunkan ke 60
+                    enable_early_acceleration_bias: true, // bias aktif
+                },
+            }),
+        ];
 
         StrategyInstance {
             strategy_id: "Bravo".to_string(),
@@ -77,11 +79,7 @@ impl StrategyBuilder {
                 slippage_sl: 0.0,
                 net_roi_enabled: false,
             }),
-            exit: Box::new(FixedTpSlExit {
-                tp_multiplier: 1.15,
-                sl_multiplier: 0.92,
-                timeout_secs: 120,
-            }),
+            exit: Box::new(FixedTpSlExit { tp_multiplier: 1.15, sl_multiplier: 0.92, timeout_secs: 120 }),
             wallet: VirtualWallet::default(),
             notifier,
             open_positions: std::collections::HashMap::new(),
@@ -91,7 +89,7 @@ impl StrategyBuilder {
     pub fn build_20260523(notifier: Option<TelegramNotifier>) -> StrategyInstance {
         let mut instance = Self::build_20260517(notifier);
         instance.strategy_id = "Charlie".to_string();
-        
+
         // Update Exit
         instance.exit = Box::new(FixedTpSlExit {
             tp_multiplier: 1.30, // +30%
@@ -109,14 +107,14 @@ impl StrategyBuilder {
         });
 
         // Add Blackout
-        instance.filters.insert(0, Box::new(BlackoutFilter {
-            blackout_hours: vec![7, 12, 19],
-            blackout_window_minutes: 60,
-        }));
+        instance.filters.insert(
+            0,
+            Box::new(BlackoutFilter { blackout_hours: vec![7, 12, 19], blackout_window_minutes: 60 }),
+        );
 
-        instance.filters.push(Box::new(VelocityFilter {
-            min_velocity_sol: 1.5,
-        }));
+        instance
+            .filters
+            .push(Box::new(VelocityFilter { min_velocity_sol: 1.5 }));
 
         instance
     }
@@ -125,8 +123,12 @@ impl StrategyBuilder {
         let mut instance = Self::build_20260523(notifier);
         instance.strategy_id = "Delta".to_string();
 
-        instance.filters.insert(0, Box::new(LiquidityFilter { min_liquidity_sol: 10.0 }));
-        instance.filters.insert(1, Box::new(SpikeFilter { max_multiplier: 3.0 }));
+        instance
+            .filters
+            .insert(0, Box::new(LiquidityFilter { min_liquidity_sol: 10.0 }));
+        instance
+            .filters
+            .insert(1, Box::new(SpikeFilter { max_multiplier: 3.0 }));
 
         instance
     }
@@ -136,9 +138,9 @@ impl StrategyBuilder {
         instance.strategy_id = "Echo".to_string();
 
         // Hanya boleh jalan di Hot Market
-        instance.filters.insert(0, Box::new(RegimeFilter { 
-            required_regimes: vec![MarketRegime::Hot] 
-        }));
+        instance
+            .filters
+            .insert(0, Box::new(RegimeFilter { required_regimes: vec![MarketRegime::Hot] }));
 
         instance
     }
@@ -146,7 +148,7 @@ impl StrategyBuilder {
     pub fn build_foxtrot(notifier: Option<TelegramNotifier>) -> StrategyInstance {
         let mut instance = Self::build_20260515(notifier); // Base: Alpha
         instance.strategy_id = "Foxtrot".to_string();
-        
+
         // Perketat Score Filter ke 100.0 (Elite Selection)
         for filter in &mut instance.filters {
             if filter.name() == "ScoreFilter" {
@@ -156,20 +158,20 @@ impl StrategyBuilder {
         }
 
         // Re-build filters khusus Foxtrot
-        let mut filters: Vec<Box<dyn TokenFilter>> = Vec::new();
-        filters.push(Box::new(VolumeFilter { min_volume_sol: 3.0 }));
-        filters.push(Box::new(BuyersFilter { min_buyers: 6 }));
-        filters.push(Box::new(ScoreFilter {
-            config: ScoreConfig {
-                volume_thresh: 3.0,
-                buyers_thresh: 6,
-                velocity_thresh: 1.5,
-                min_score: 100.0, // Parameter yang diminta: 100
-                enable_early_acceleration_bias: true,
-            }
-        }));
-        instance.filters = filters;
-        
+        instance.filters = vec![
+            Box::new(VolumeFilter { min_volume_sol: 3.0 }),
+            Box::new(BuyersFilter { min_buyers: 6 }),
+            Box::new(ScoreFilter {
+                config: ScoreConfig {
+                    volume_thresh: 3.0,
+                    buyers_thresh: 6,
+                    velocity_thresh: 1.5,
+                    min_score: 100.0, // Parameter yang diminta: 100
+                    enable_early_acceleration_bias: true,
+                },
+            }),
+        ];
+
         // Ganti dengan Trailing Exit
         instance.exit = Box::new(super::exit::trailing_tp_sl::TrailingTpSlExit {
             activation_multiplier: 1.15, // Aktif di +15%

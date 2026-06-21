@@ -1,5 +1,5 @@
-use sqlx::SqlitePool;
 use serde::Serialize;
+use sqlx::SqlitePool;
 use tracing::info;
 
 #[allow(dead_code)]
@@ -32,7 +32,7 @@ impl AnalyticsEngine {
                       COUNT(*) as total_evals, 
                       SUM(CASE WHEN final_decision = 'BUY' THEN 1 ELSE 0 END) as buys 
                FROM decision_traces 
-               GROUP BY strategy_id"#
+               GROUP BY strategy_id"#,
         )
         .fetch_all(&self.pool)
         .await
@@ -43,16 +43,20 @@ impl AnalyticsEngine {
             let total_evals: i64 = row.get(1);
             let buys: i64 = row.get(2);
             info!(
-                "[{}] Evaluasi: {} | Buy: {} ({:.2}%)", 
-                strategy_id, 
-                total_evals, 
-                buys, 
-                if total_evals > 0 { (buys as f64 / total_evals as f64) * 100.0 } else { 0.0 }
+                "[{}] Evaluasi: {} | Buy: {} ({:.2}%)",
+                strategy_id,
+                total_evals,
+                buys,
+                if total_evals > 0 {
+                    (buys as f64 / total_evals as f64) * 100.0
+                } else {
+                    0.0
+                }
             );
         }
-        
+
         info!("========================================");
-        
+
         // Asumsi data wallet snapshots akan disimpan, kita print placeholder
         info!("Wallet snapshots will provide full ROI per strategy in the future.");
     }

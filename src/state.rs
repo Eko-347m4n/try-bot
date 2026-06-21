@@ -1,9 +1,9 @@
 use crate::engine::market_context::MarketContext;
 use crate::strategy::instance::StrategyStatus;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use std::time::Instant;
 use chrono::{DateTime, Utc};
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::Mutex;
 
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -59,11 +59,17 @@ impl SessionState {
 
     pub fn win_rate(&self) -> f64 {
         let finished = self.tp_hits + self.sl_hits;
-        if finished == 0 { 0.0 } else { self.tp_hits as f64 / finished as f64 }
+        if finished == 0 {
+            0.0
+        } else {
+            self.tp_hits as f64 / finished as f64
+        }
     }
 
     pub fn total_roi_pct(&self) -> f64 {
-        if self.initial_balance == 0.0 { return 0.0; }
+        if self.initial_balance == 0.0 {
+            return 0.0;
+        }
         ((self.virtual_balance / self.initial_balance) - 1.0) * 100.0
     }
 }

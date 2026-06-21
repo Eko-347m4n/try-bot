@@ -3,17 +3,17 @@ use crate::queue::event_queue::BotEvent;
 use crate::state::SharedState;
 use crate::storage::db::{self, TradeRecord};
 use crate::telegram::{TelegramNotifier, TradeResult};
+use chrono::{DateTime, Timelike, Utc};
 use sqlx::SqlitePool;
+use std::collections::{HashMap, VecDeque};
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
-use std::collections::{HashMap, VecDeque};
-use chrono::{DateTime, Utc, Timelike};
-use std::time::Instant;
 
-const TRADING_FEE_RATE: f64 = 0.0125;  // 1.25% per sisi
-const PRIORITY_FEE_SOL: f64 = 0.002;   // per transaksi
-const SLIPPAGE_TP: f64 = 0.01;         // 1% estimasi slippage saat Take Profit
-const SLIPPAGE_SL: f64 = 0.03;         // 3% estimasi slippage saat Stop Loss (konservatif)
+const TRADING_FEE_RATE: f64 = 0.0125; // 1.25% per sisi
+const PRIORITY_FEE_SOL: f64 = 0.002; // per transaksi
+const SLIPPAGE_TP: f64 = 0.01; // 1% estimasi slippage saat Take Profit
+const SLIPPAGE_SL: f64 = 0.03; // 3% estimasi slippage saat Stop Loss (konservatif)
 
 #[derive(Debug, Clone)]
 pub struct Position {
@@ -69,8 +69,16 @@ impl SimulationEngine {
                 let mut s = self.state.lock().await;
                 s.last_ws_event = std::time::Instant::now();
             }
-            BotEvent::BuySignal { token_address, price, volume_at_entry, velocity_score, buyers_count, entry_score } => {
-                self.virtual_buy(token_address, price, volume_at_entry, velocity_score, buyers_count, entry_score).await;
+            BotEvent::BuySignal {
+                token_address,
+                price,
+                volume_at_entry,
+                velocity_score,
+                buyers_count,
+                entry_score,
+            } => {
+                self.virtual_buy(token_address, price, volume_at_entry, velocity_score, buyers_count, entry_score)
+                    .await;
             }
             BotEvent::PriceUpdate { token_address, price, .. } => {
                 {
@@ -78,7 +86,7 @@ impl SimulationEngine {
                     s.market_events += 1;
                     s.last_ws_event = std::time::Instant::now();
                 }
-                
+
                 if let Some(pos) = self.open_positions.get_mut(&token_address) {
                     pos.latest_price = price;
                     pos.last_update = std::time::Instant::now();
@@ -92,12 +100,22 @@ impl SimulationEngine {
             }
             _ => {}
         }
-        
+
         self.check_stale_positions().await;
     }
 
-    async fn virtual_buy(&mut self, address: String, entry_price: f64, volume_at_entry: f64, velocity_score: f64, buyers_count: u32, entry_score: f64) {
-        if self.open_positions.contains_key(&address) { return; }
+    async fn virtual_buy(
+        &mut self,
+        address: String,
+        entry_price: f64,
+        volume_at_entry: f64,
+        velocity_score: f64,
+        buyers_count: u32,
+        entry_score: f64,
+    ) {
+        if self.open_positions.contains_key(&address) {
+            return;
+        }
 
         const MAX_POSITIONS: usize = 5;
         const MIN_VIRTUAL_BALANCE: f64 = 0.2; // SOL
@@ -110,15 +128,23 @@ impl SimulationEngine {
         }
 
         if s.virtual_balance < MIN_VIRTUAL_BALANCE {
-            info!("🔄 Auto-Topup: Saldo virtual {:.3} SOL menipis. Menambah 1.0 SOL.", s.virtual_balance);
+            info!(
+                "🔄 Auto-Topup: Saldo virtual {:.3} SOL menipis. Menambah 1.0 SOL.",
+                s.virtual_balance
+            );
             let topup_amount = 1.0;
             s.virtual_balance += topup_amount;
-            
+
             // Catat ke database
             db::insert_virtual_topup(&self.db, topup_amount, s.virtual_balance).await;
 
             if let Some(notifier) = &self.notifier {
-                notifier.send_generic_alert(format!("⚠️ *AUTO-TOPUP*: Saldo virtual menipis. Menambahkan 1.0 SOL. Saldo baru: {:.3} SOL", s.virtual_balance)).await;
+                notifier
+                    .send_generic_alert(format!(
+                        "⚠️ *AUTO-TOPUP*: Saldo virtual menipis. Menambahkan 1.0 SOL. Saldo baru: {:.3} SOL",
+                        s.virtual_balance
+                    ))
+                    .await;
             }
         }
 
@@ -136,18 +162,25 @@ impl SimulationEngine {
         let total_buy_cost = entry_size + fee_buy + PRIORITY_FEE_SOL;
 
         if s.virtual_balance < total_buy_cost {
-            warn!("Saldo tidak cukup untuk biaya transaksi: {:.4} SOL < {:.4} SOL (Entry + Fees)", s.virtual_balance, total_buy_cost);
+            warn!(
+                "Saldo tidak cukup untuk biaya transaksi: {:.4} SOL < {:.4} SOL (Entry + Fees)",
+                s.virtual_balance, total_buy_cost
+            );
             return;
         }
 
         if s.total_trades < BOOTSTRAP_TRADES {
-            info!("🚀 BOOTSTRAP BUY ({}): Menggunakan size kecil {:.3} SOL untuk mengumpulkan data.", s.total_trades + 1, entry_size);
+            info!(
+                "🚀 BOOTSTRAP BUY ({}): Menggunakan size kecil {:.3} SOL untuk mengumpulkan data.",
+                s.total_trades + 1,
+                entry_size
+            );
         }
 
         s.virtual_balance -= total_buy_cost;
         s.active_positions += 1;
         s.total_trades += 1;
-        
+
         let record = TradeRecord {
             timestamp: Utc::now().to_rfc3339(),
             token_addr: address.clone(),
@@ -178,7 +211,10 @@ impl SimulationEngine {
             total_buy_cost,
         };
 
-        info!("🟢 VIRTUAL BUY: {} | Balance: {:.3} SOL | Net Cost: {:.4} SOL", address, s.virtual_balance, total_buy_cost);
+        info!(
+            "🟢 VIRTUAL BUY: {} | Balance: {:.3} SOL | Net Cost: {:.4} SOL",
+            address, s.virtual_balance, total_buy_cost
+        );
         self.open_positions.insert(address, pos);
     }
 
@@ -201,8 +237,11 @@ impl SimulationEngine {
         if let Some(pos) = self.open_positions.get(&address) {
             let tp = pos.entry_price * 1.30; // Target +30%
             let sl = pos.entry_price * 0.92; // Batas -8%
-            if current_price >= tp { exit_type = Some("TP".to_string()); }
-            else if current_price <= sl { exit_type = Some("SL".to_string()); }
+            if current_price >= tp {
+                exit_type = Some("TP".to_string());
+            } else if current_price <= sl {
+                exit_type = Some("SL".to_string());
+            }
         }
 
         if let Some(et) = exit_type {
@@ -214,7 +253,7 @@ impl SimulationEngine {
         if let Some(pos) = self.open_positions.remove(&address) {
             db::delete_open_position(&self.db, &address).await;
             let _ = self.tx.send(BotEvent::Unsubscribe(address.clone()));
-            
+
             // 1. Tentukan harga keluar efektif setelah slippage asimetris
             let effective_exit_price = if exit_type == "TP" {
                 current_price * (1.0 - SLIPPAGE_TP)
@@ -240,32 +279,39 @@ impl SimulationEngine {
 
             self.closed_trades.push(net_pnl_percent);
             self.hold_times_secs.push(hold_time);
-            
+
             let mut s = self.state.lock().await;
             s.active_positions = s.active_positions.saturating_sub(1);
-            
-            if exit_type == "TP" { 
-                s.tp_hits += 1; 
+
+            if exit_type == "TP" {
+                s.tp_hits += 1;
                 self.recent_outcomes.push_back(true);
-            } else { 
-                s.sl_hits += 1; 
+            } else {
+                s.sl_hits += 1;
                 self.recent_outcomes.push_back(false);
             }
-            if self.recent_outcomes.len() > 20 { self.recent_outcomes.pop_front(); }
-            
+            if self.recent_outcomes.len() > 20 {
+                self.recent_outcomes.pop_front();
+            }
+
             info!(
                 "{} Posisi Ditutup ({}): Net Cost: {:.4} SOL, Net Return: {:.4} SOL, Net PNL: {:.2}%",
-                if net_pnl_percent >= 0.0 {"✅"} else {"🔻"},
-                exit_type, pos.total_buy_cost, net_return, net_pnl_percent
+                if net_pnl_percent >= 0.0 { "✅" } else { "🔻" },
+                exit_type,
+                pos.total_buy_cost,
+                net_return,
+                net_pnl_percent
             );
-			
+
             s.virtual_balance += net_return;
-            
+
             // Sync total_pnl_pct dengan ROI baru
             let current_roi = s.total_roi_pct();
             s.total_pnl_pct = current_roi;
-            
-            if s.total_pnl_pct > self.peak_roi { self.peak_roi = s.total_pnl_pct; }
+
+            if s.total_pnl_pct > self.peak_roi {
+                self.peak_roi = s.total_pnl_pct;
+            }
             drop(s);
 
             self.check_anomalies(current_roi).await;
@@ -287,14 +333,16 @@ impl SimulationEngine {
             db::insert_trade(&self.db, &record).await;
 
             if let Some(notifier) = &self.notifier {
-                notifier.send_trade_alert(&TradeResult {
-                    strategy_id: "Legacy".to_string(),
-                    token_addr: address,
-                    pnl_pct: net_pnl_percent,
-                    hold_secs: hold_time,
-                    exit_type: exit_type.to_string(),
-                    session_roi: current_roi,
-                }).await;
+                notifier
+                    .send_trade_alert(&TradeResult {
+                        strategy_id: "Legacy".to_string(),
+                        token_addr: address,
+                        pnl_pct: net_pnl_percent,
+                        hold_secs: hold_time,
+                        exit_type: exit_type.to_string(),
+                        session_roi: current_roi,
+                    })
+                    .await;
             }
         }
     }
@@ -303,13 +351,23 @@ impl SimulationEngine {
         if let Some(notifier) = &self.notifier {
             let sl_streak = self.recent_outcomes.iter().rev().take_while(|&&w| !w).count();
             if sl_streak >= 4 {
-                notifier.send_generic_alert(format!("⚠️ *ANOMALI*: {} SL berturut-turut — market mungkin sedang dump.", sl_streak)).await;
+                notifier
+                    .send_generic_alert(format!(
+                        "⚠️ *ANOMALI*: {} SL berturut-turut — market mungkin sedang dump.",
+                        sl_streak
+                    ))
+                    .await;
             }
 
             if self.peak_roi > 10.0 {
                 let drawdown = self.peak_roi - current_roi;
                 if drawdown > 30.0 {
-                    notifier.send_generic_alert(format!("⚠️ *DRAWDOWN TINGGI*: {:.1}% dari peak ROI {:.2}% — pertimbangkan pause manual.", drawdown, self.peak_roi)).await;
+                    notifier
+                        .send_generic_alert(format!(
+                            "⚠️ *DRAWDOWN TINGGI*: {:.1}% dari peak ROI {:.2}% — pertimbangkan pause manual.",
+                            drawdown, self.peak_roi
+                        ))
+                        .await;
                 }
             }
         }
@@ -317,15 +375,19 @@ impl SimulationEngine {
 
     async fn handle_session_end(&mut self) {
         info!("🛑 Menutup sesi... Menganalisis hasil perdagangan.");
-        
+
         let mut floating_pnl = 0.0;
         let mut open_trade_count = 0;
 
         for (addr, pos) in self.open_positions.drain() {
             let current_price = pos.latest_price;
             let pnl = (current_price - pos.entry_price) / pos.entry_price * 100.0;
-            tracing::warn!("Unclosed position: {} | entry: {:.10} | current: {:.10} | pnl: {:.2}%",
-                addr, pos.entry_price, current_price, pnl
+            tracing::warn!(
+                "Unclosed position: {} | entry: {:.10} | current: {:.10} | pnl: {:.2}%",
+                addr,
+                pos.entry_price,
+                current_price,
+                pnl
             );
             floating_pnl += pnl;
             open_trade_count += 1;

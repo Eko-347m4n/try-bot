@@ -1,5 +1,5 @@
-use crate::core::types::ExitDecision;
 use super::ExitStrategy;
+use crate::core::types::ExitDecision;
 
 pub struct TrailingTpSlExit {
     pub activation_multiplier: f64, // Titik aktif trailing (misal 1.15 untuk +15%)
@@ -9,14 +9,20 @@ pub struct TrailingTpSlExit {
 }
 
 impl ExitStrategy for TrailingTpSlExit {
-    fn evaluate_exit(&self, entry_price: f64, current_price: f64, highest_price: f64, elapsed_secs: u64) -> Option<ExitDecision> {
+    fn evaluate_exit(
+        &self,
+        entry_price: f64,
+        current_price: f64,
+        highest_price: f64,
+        elapsed_secs: u64,
+    ) -> Option<ExitDecision> {
         let sl_target = entry_price * self.sl_multiplier;
         let activation_target = entry_price * self.activation_multiplier;
 
         // Jika harga sudah pernah menyentuh target aktivasi, gunakan trailing stop
         if highest_price >= activation_target {
             let trailing_stop_price = highest_price * (1.0 - self.trailing_percent);
-            
+
             if current_price <= trailing_stop_price {
                 Some(ExitDecision::TakeProfit)
             } else if elapsed_secs > self.timeout_secs {

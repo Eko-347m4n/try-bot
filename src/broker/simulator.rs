@@ -7,7 +7,16 @@ pub trait Broker: Send + Sync {
 
     /// Menghitung PNL bersih (Net Return) setelah posisi ditutup, dengan memperhitungkan fee dan slippage.
     /// Mengembalikan nilai net_return dalam SOL.
-    fn calculate_net_return(&self, exit_type: &ExitDecision, entry_price: f64, current_price: f64, size_sol: f64) -> f64;
+    fn calculate_net_return(
+        &self,
+        exit_type: &ExitDecision,
+        entry_price: f64,
+        current_price: f64,
+        size_sol: f64,
+    ) -> f64;
+
+    /// Mengembalikan deskripsi konfigurasi broker untuk logging startup
+    fn describe(&self) -> String;
 }
 
 pub struct RealisticBroker {
@@ -26,13 +35,30 @@ impl Broker for RealisticBroker {
 
         let fee_buy = size_sol * self.trading_fee_rate;
         let total_buy_cost = size_sol + fee_buy + self.priority_fee_sol;
-        
+
         // Asumsi slippage entry belum diterapkan secara historis di kode lama,
         // jadi effective entry price tetap
         (entry_price, total_buy_cost)
     }
 
-    fn calculate_net_return(&self, exit_type: &ExitDecision, entry_price: f64, current_price: f64, size_sol: f64) -> f64 {
+    fn describe(&self) -> String {
+        format!(
+            "trading_fee={}% | priority_fee={} SOL | slippage_tp={}% | slippage_sl={}% | net_roi={}",
+            self.trading_fee_rate * 100.0,
+            self.priority_fee_sol,
+            self.slippage_tp * 100.0,
+            self.slippage_sl * 100.0,
+            self.net_roi_enabled
+        )
+    }
+
+    fn calculate_net_return(
+        &self,
+        exit_type: &ExitDecision,
+        entry_price: f64,
+        current_price: f64,
+        size_sol: f64,
+    ) -> f64 {
         if !self.net_roi_enabled {
             // Pengembalian kotor
             return size_sol * (current_price / entry_price);
@@ -46,8 +72,7 @@ impl Broker for RealisticBroker {
 
         let gross_return = size_sol * (effective_exit_price / entry_price);
         let fee_sell = gross_return * self.trading_fee_rate;
-        
+
         gross_return - fee_sell - self.priority_fee_sol
     }
 }
-

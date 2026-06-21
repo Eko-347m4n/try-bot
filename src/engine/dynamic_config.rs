@@ -1,31 +1,31 @@
-use crate::engine::rolling_stats::MarketSnapshot;
 use crate::engine::market_context::{MarketContext, MarketRegime};
+use crate::engine::rolling_stats::MarketSnapshot;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MarketMode {
-    Hot,      // market sangat aktif
-    Normal,   // kondisi market baik
-    Strict,   // kondisi mulai buruk, perketat filter
-    Pause,    // kondisi sangat buruk, stop trading
+    Hot,    // market sangat aktif
+    Normal, // kondisi market baik
+    Strict, // kondisi mulai buruk, perketat filter
+    Pause,  // kondisi sangat buruk, stop trading
 }
 
 #[derive(Debug, Clone)]
 pub struct DynamicConfig {
-    pub mode:              MarketMode,
-    pub velocity_thresh:   f64,
+    pub mode: MarketMode,
+    pub velocity_thresh: f64,
     pub max_velocity_thresh: f64, // Ceiling untuk menghindari extreme volatility
-    pub volume_thresh:     f64,
-    pub buyers_thresh:     u32,
-    pub reason:            String,
+    pub volume_thresh: f64,
+    pub buyers_thresh: u32,
+    pub reason: String,
 }
 
 impl DynamicConfig {
     pub fn normal() -> Self {
         Self {
             mode: MarketMode::Normal,
-            velocity_thresh: 0.8, // naik dari 0.5
+            velocity_thresh: 0.8,      // naik dari 0.5
             max_velocity_thresh: 35.0, // Batas aman berdasarkan data historis
             volume_thresh: 3.0,
             buyers_thresh: 6,
@@ -35,8 +35,8 @@ impl DynamicConfig {
 
     pub fn normal_relaxed() -> Self {
         Self {
-            mode: MarketMode::Hot, // ubah dari Normal ke Hot
-            velocity_thresh: 0.6, // naik dari 0.4
+            mode: MarketMode::Hot,     // ubah dari Normal ke Hot
+            velocity_thresh: 0.6,      // naik dari 0.4
             max_velocity_thresh: 45.0, // Toleransi lebih tinggi di market Hot
             volume_thresh: 2.5,
             buyers_thresh: 5,
@@ -47,7 +47,7 @@ impl DynamicConfig {
     pub fn strict(reason: &str) -> Self {
         Self {
             mode: MarketMode::Strict,
-            velocity_thresh: 1.2, // naik dari 1.0
+            velocity_thresh: 1.2,      // naik dari 1.0
             max_velocity_thresh: 30.0, // Perketat di market yang mulai tidak stabil
             volume_thresh: 5.0,
             buyers_thresh: 10,
@@ -115,19 +115,20 @@ impl DynamicConfig {
                 let mut cfg = Self::normal_relaxed(); // Mode paling santai untuk market Hot
                 cfg.reason = "Hot Market (WR Ignored)".into();
                 cfg
-            },
+            }
             MarketRegime::Normal => {
                 let mut cfg = Self::normal(); // Mode normal untuk market Normal
                 cfg.reason = "Normal Market (WR Ignored)".into();
                 cfg
-            },
+            }
             MarketRegime::Cooling => {
                 Self::strict("Market is Cooling Down (WR Ignored)") // Market Cooling = Strict
-            },
+            }
             MarketRegime::Cold => {
                 Self::pause("Market is Cold (WR Ignored)") // Market Cold = Pause
-            },
-            MarketRegime::Unknown => { // Ketika data minim, tetap konservatif
+            }
+            MarketRegime::Unknown => {
+                // Ketika data minim, tetap konservatif
                 Self::strict("Insufficient market data (WR Ignored)")
             }
         }

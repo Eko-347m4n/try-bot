@@ -1,12 +1,12 @@
-use tokio::sync::mpsc;
-use crate::queue::event_queue::BotEvent;
-use crate::engine::market_context::MarketContext;
+use crate::config::StrategyParameters;
 use crate::core::events::TokenActivity;
 use crate::core::types::TraceRecord;
+use crate::engine::market_context::MarketContext;
+use crate::queue::event_queue::BotEvent;
 use crate::strategy::instance::{Strategy, StrategyStatus};
-use crate::config::StrategyParameters;
-use std::collections::HashMap;
 use chrono::Utc;
+use std::collections::HashMap;
+use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 use tracing::info;
 
@@ -21,7 +21,7 @@ pub struct Dispatcher {
 
 impl Dispatcher {
     pub fn new(
-        strategies: Vec<Box<dyn Strategy>>, 
+        strategies: Vec<Box<dyn Strategy>>,
         trace_tx: mpsc::Sender<TraceRecord>,
         event_tx: mpsc::UnboundedSender<BotEvent>,
         params: StrategyParameters,
@@ -40,10 +40,10 @@ impl Dispatcher {
         // Pre-processing: update activity map
         match &event {
             BotEvent::NewToken(token) => {
-                self.activities.insert(token.address.clone(), TokenActivity {
-                    latest_price: token.initial_price,
-                    ..Default::default()
-                });
+                self.activities.insert(
+                    token.address.clone(),
+                    TokenActivity { latest_price: token.initial_price, ..Default::default() },
+                );
                 self.handle_new_token(token.clone());
             }
             BotEvent::PriceUpdate { token_address, price, volume, is_buy, .. } => {
@@ -78,7 +78,7 @@ impl Dispatcher {
 
         for strategy in &mut self.strategies {
             strategy.process_event(&event, activity_opt.as_ref(), &self.market_ctx, &self.trace_tx);
-            
+
             // GLOBAL STALE CHECK:
             // Jalankan pemeriksaan timeout untuk semua posisi di strategi ini
             strategy.check_timeouts(&self.activities, &self.trace_tx);
@@ -96,8 +96,10 @@ impl Dispatcher {
         if age < self.params.token_age_seconds.min {
             let delay = self.params.token_age_seconds.min - age;
             let half_delay = delay / 2;
-            info!("🔍 Token {} ({}) terdeteksi. Menunggu aktivitas {}s...", 
-                token.symbol, token.address, delay);
+            info!(
+                "🔍 Token {} ({}) terdeteksi. Menunggu aktivitas {}s...",
+                token.symbol, token.address, delay
+            );
 
             let tx_clone = self.event_tx.clone();
             tokio::spawn(async move {

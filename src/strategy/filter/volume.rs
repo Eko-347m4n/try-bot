@@ -1,8 +1,8 @@
-use crate::queue::event_queue::TokenData;
-use crate::engine::market_context::MarketContext;
-use crate::core::types::FilterResult;
-use crate::core::events::TokenActivity;
 use super::TokenFilter;
+use crate::core::events::TokenActivity;
+use crate::core::types::FilterResult;
+use crate::engine::market_context::MarketContext;
+use crate::queue::event_queue::TokenData;
 
 pub struct VolumeFilter {
     pub min_volume_sol: f64,
@@ -20,10 +20,7 @@ impl TokenFilter for VolumeFilter {
                 reason: format!("Vol {:.2} < {:.2} SOL", activity.total_volume, self.min_volume_sol),
             }
         } else {
-            FilterResult {
-                passed: true,
-                reason: "OK".to_string(),
-            }
+            FilterResult { passed: true, reason: "OK".to_string() }
         }
     }
 }

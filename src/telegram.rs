@@ -1,9 +1,9 @@
-use teloxide::prelude::*;
-use teloxide::utils::command::BotCommands;
-use teloxide::RequestError;
 use crate::state::SharedState;
 use crate::storage::db;
 use sqlx::SqlitePool;
+use teloxide::prelude::*;
+use teloxide::utils::command::BotCommands;
+use teloxide::RequestError;
 use tracing::warn;
 
 #[derive(Clone)]
@@ -40,13 +40,17 @@ impl TelegramNotifier {
              📈 *Strategy ROI:* `{:.2}%` bersih",
             trade.strategy_id,
             trade.token_addr,
-            trade.exit_type, emoji, trade.pnl_pct,
+            trade.exit_type,
+            emoji,
+            trade.pnl_pct,
             trade.hold_secs,
             trade.session_roi
         );
-        self.bot.send_message(self.chat_id, msg)
+        self.bot
+            .send_message(self.chat_id, msg)
             .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-            .await.ok();
+            .await
+            .ok();
     }
 
     #[allow(dead_code)]
@@ -60,10 +64,12 @@ impl TelegramNotifier {
              [Pump.fun](https://pump.fun/{}) | [DexS](https://dexscreener.com/solana/{})",
             strategy_id, token, score, velocity, buyers, token, token
         );
-        self.bot.send_message(self.chat_id, msg)
+        self.bot
+            .send_message(self.chat_id, msg)
             .parse_mode(teloxide::types::ParseMode::MarkdownV2)
             .disable_notification(true)
-            .await.ok();
+            .await
+            .ok();
     }
 
     pub async fn send_generic_alert(&self, msg: String) {
@@ -111,23 +117,14 @@ enum Command {
 pub async fn start_command_handler(bot_token: String, state: SharedState, db: SqlitePool) {
     let bot = Bot::new(bot_token);
     let handler = dptree::entry()
-        .branch(
-            Update::filter_message()
-                .filter_command::<Command>()
-                .endpoint(answer)
-        )
-        .branch(
-            Update::filter_message()
-                .endpoint(|_bot: Bot, _msg: Message| async move {
-                    Ok::<_, RequestError>(())
-                })
-        );
-    
+        .branch(Update::filter_message().filter_command::<Command>().endpoint(answer))
+        .branch(Update::filter_message().endpoint(|_bot: Bot, _msg: Message| async move { Ok::<_, RequestError>(()) }));
+
     tokio::spawn(async move {
         teloxide::dispatching::Dispatcher::builder(bot, handler)
             .dependencies(dptree::deps![state, db])
             .error_handler(teloxide::error_handlers::LoggingErrorHandler::with_custom_text(
-                "Teloxide error (mengabaikan TerminatedByOtherGetUpdates jika ada instance ganda yang berjalan)"
+                "Teloxide error (mengabaikan TerminatedByOtherGetUpdates jika ada instance ganda yang berjalan)",
             ))
             .build()
             .dispatch()
@@ -146,7 +143,7 @@ async fn answer(bot: Bot, msg: Message, cmd: Command, state: SharedState, db: Sq
             } else {
                 "Unknown".to_string()
             };
-            
+
             let mut response = format!(
                 "<b>🤖 STATUS BOT (MULTI-STRATEGY)</b>\n\n\
                  Status: <b>{}</b>\n\
@@ -167,20 +164,26 @@ async fn answer(bot: Bot, msg: Message, cmd: Command, state: SharedState, db: Sq
                          • WR: <code>{:.1}%</code> | Trades: <code>{}</code>\n\
                          • Pos: <code>{} active</code>\n\
                          • Exit: <code>+{:.0}% / -{:.0}%</code>\n\n",
-                        short_id, stat.total_equity, stat.balance, 
+                        short_id,
+                        stat.total_equity,
+                        stat.balance,
                         (stat.realized_pnl / 1.0) * 100.0,
-                        stat.win_rate, stat.trade_count, stat.active_positions,
+                        stat.win_rate,
+                        stat.trade_count,
+                        stat.active_positions,
                         (stat.tp_multiplier - 1.0) * 100.0,
                         (1.0 - stat.sl_multiplier) * 100.0
                     ));
                 }
             }
 
-            bot.send_message(msg.chat.id, response).parse_mode(teloxide::types::ParseMode::Html).await?;
+            bot.send_message(msg.chat.id, response)
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await?;
         }
         Command::Report => {
             let s = state.lock().await;
-            let mut response = format!("📊 <b>SUMMARY LAPORAN MULTI-STRATEGY</b>\n\n");
+            let mut response = "📊 <b>SUMMARY LAPORAN MULTI-STRATEGY</b>\n\n".to_string();
 
             if s.strategy_statuses.is_empty() {
                 response.push_str("<i>Tidak ada data untuk dilaporkan.</i>");
@@ -193,15 +196,19 @@ async fn answer(bot: Bot, msg: Message, cmd: Command, state: SharedState, db: Sq
                          • Win Rate: <b>{:.1}%</b>\n\
                          • Total Trades: <code>{}</code>\n\
                          • Cash: <code>{:.3} SOL</code>\n\n",
-                        stat.id, 
+                        stat.id,
                         stat.total_equity,
                         (stat.realized_pnl / 1.0) * 100.0,
-                        stat.win_rate, stat.trade_count, stat.balance
+                        stat.win_rate,
+                        stat.trade_count,
+                        stat.balance
                     ));
                 }
             }
 
-            bot.send_message(msg.chat.id, response).parse_mode(teloxide::types::ParseMode::Html).await?;
+            bot.send_message(msg.chat.id, response)
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await?;
         }
         Command::Filter => {
             use sqlx::Row;
@@ -216,7 +223,7 @@ async fn answer(bot: Bot, msg: Message, cmd: Command, state: SharedState, db: Sq
                           SUM(CASE WHEN final_decision = 'BUY' THEN 1 ELSE 0 END) as buys 
                    FROM decision_traces 
                    WHERE timestamp >= ?
-                   GROUP BY strategy_id"#
+                   GROUP BY strategy_id"#,
             )
             .bind(session_start)
             .fetch_all(&db)
@@ -235,8 +242,12 @@ async fn answer(bot: Bot, msg: Message, cmd: Command, state: SharedState, db: Sq
                     let total: i64 = row.get(1);
                     let buys: i64 = row.get(2);
                     let rejected = total - buys;
-                    let pass_rate = if total > 0 { (buys as f64 / total as f64) * 100.0 } else { 0.0 };
-                    
+                    let pass_rate = if total > 0 {
+                        (buys as f64 / total as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+
                     response.push_str(&format!(
                         "🛡️ <b>{}</b>\n\
                          • Scanned: <code>{}</code>\n\
@@ -252,23 +263,33 @@ async fn answer(bot: Bot, msg: Message, cmd: Command, state: SharedState, db: Sq
                 response.push_str("❌ Gagal mengambil data filter dari database.");
             }
 
-            bot.send_message(msg.chat.id, response).parse_mode(teloxide::types::ParseMode::Html).await?;
+            bot.send_message(msg.chat.id, response)
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await?;
         }
         Command::Pause => {
             state.lock().await.is_running = false;
-            bot.send_message(msg.chat.id, "⏸️ <b>Bot di-pause.</b> Sinyal baru tidak akan diproses.").parse_mode(teloxide::types::ParseMode::Html).await?;
+            bot.send_message(msg.chat.id, "⏸️ <b>Bot di-pause.</b> Sinyal baru tidak akan diproses.")
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await?;
         }
         Command::Resume => {
             state.lock().await.is_running = true;
-            bot.send_message(msg.chat.id, "▶️ <b>Bot dilanjutkan.</b> Memulai pencarian sinyal baru...").parse_mode(teloxide::types::ParseMode::Html).await?;
+            bot.send_message(msg.chat.id, "▶️ <b>Bot dilanjutkan.</b> Memulai pencarian sinyal baru...")
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await?;
         }
         Command::SetVolume(val) => {
             state.lock().await.volume_threshold = val;
-            bot.send_message(msg.chat.id, format!("✅ Volume threshold diubah ke <b>{} SOL</b>", val)).parse_mode(teloxide::types::ParseMode::Html).await?;
+            bot.send_message(msg.chat.id, format!("✅ Volume threshold diubah ke <b>{} SOL</b>", val))
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await?;
         }
         Command::SetVelocity(val) => {
             state.lock().await.velocity_threshold = val;
-            bot.send_message(msg.chat.id, format!("✅ Velocity threshold diubah ke <b>{}</b>", val)).parse_mode(teloxide::types::ParseMode::Html).await?;
+            bot.send_message(msg.chat.id, format!("✅ Velocity threshold diubah ke <b>{}</b>", val))
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await?;
         }
         Command::History => {
             let rows = sqlx::query("SELECT token_addr, exit_type, pnl_pct FROM trades ORDER BY id DESC LIMIT 10")
@@ -283,17 +304,38 @@ async fn answer(bot: Bot, msg: Message, cmd: Command, state: SharedState, db: Sq
                     let exit_type: String = row.get("exit_type");
                     let pnl: f64 = row.get("pnl_pct");
                     let emoji = if pnl >= 0.0 { "✅" } else { "🔻" };
-                    results.push(format!("{} <code>{}</code>: <b>{:.2}%</b> ({})", emoji, if addr.len() > 8 { &addr[..8] } else { &addr }, pnl, exit_type));
+                    results.push(format!(
+                        "{} <code>{}</code>: <b>{:.2}%</b> ({})",
+                        emoji,
+                        if addr.len() > 8 { &addr[..8] } else { &addr },
+                        pnl,
+                        exit_type
+                    ));
                 }
-                let msg_text = if results.len() == 1 { "Belum ada riwayat perdagangan.".to_string() } else { results.join("\n") };
-                bot.send_message(msg.chat.id, msg_text).parse_mode(teloxide::types::ParseMode::Html).await?;
+                let msg_text = if results.len() == 1 {
+                    "Belum ada riwayat perdagangan.".to_string()
+                } else {
+                    results.join("\n")
+                };
+                bot.send_message(msg.chat.id, msg_text)
+                    .parse_mode(teloxide::types::ParseMode::Html)
+                    .await?;
             } else {
-                bot.send_message(msg.chat.id, "❌ Gagal mengambil riwayat dari database.").await?;
+                bot.send_message(msg.chat.id, "❌ Gagal mengambil riwayat dari database.")
+                    .await?;
             }
         }
         Command::Winrate => {
             let wr = db::query_win_rate_last_n(&db, 20).await;
-            bot.send_message(msg.chat.id, format!("🏆 <b>Rolling Winrate (20 trade terakhir):</b>\n\nDasar: <b>{:.1}%</b>", wr * 100.0)).parse_mode(teloxide::types::ParseMode::Html).await?;
+            bot.send_message(
+                msg.chat.id,
+                format!(
+                    "🏆 <b>Rolling Winrate (20 trade terakhir):</b>\n\nDasar: <b>{:.1}%</b>",
+                    wr * 100.0
+                ),
+            )
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .await?;
         }
     }
     Ok(())

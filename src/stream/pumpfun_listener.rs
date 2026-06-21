@@ -1,14 +1,14 @@
 use crate::queue::event_queue::{BotEvent, TokenData};
 use crate::telegram::TelegramNotifier;
-use futures_util::{StreamExt, SinkExt};
-use tokio::sync::mpsc;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use tracing::{info, error, warn, debug};
-use url::Url;
-use chrono::Utc;
 use anyhow::Result;
+use chrono::Utc;
+use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
-use tokio::time::{sleep, Duration, timeout};
+use tokio::sync::mpsc;
+use tokio::time::{sleep, timeout, Duration};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tracing::{debug, error, info, warn};
+use url::Url;
 
 pub struct PumpfunListener {
     ws_url: String,
@@ -27,16 +27,18 @@ impl PumpfunListener {
 
         loop {
             info!("🔄 Menghubungkan ke WebSocket Pump.fun...");
-            
+
             match connect_async(url.clone()).await {
                 Ok((ws_stream, _)) => {
                     info!("✅ Terhubung ke WebSocket.");
                     delay = Duration::from_secs(1); // Reset delay on success
-                    
+
                     let (mut write, mut read) = ws_stream.split();
                     let (tx_ws, mut rx_ws) = mpsc::unbounded_channel::<String>();
 
-                    let _ = write.send(Message::Text(serde_json::json!({"method":"subscribeNewToken"}).to_string())).await;
+                    let _ = write
+                        .send(Message::Text(serde_json::json!({"method":"subscribeNewToken"}).to_string()))
+                        .await;
 
                     loop {
                         tokio::select! {
@@ -94,7 +96,12 @@ impl PumpfunListener {
                 Err(e) => {
                     error!("❌ Gagal terhubung: {}. Retry dalam {}s...", e, delay.as_secs());
                     if let Some(n) = &self.notifier {
-                        n.send_generic_alert(format!("⚠️ *WebSocket Putus*: {} — reconnect dalam {}s", e, delay.as_secs())).await;
+                        n.send_generic_alert(format!(
+                            "⚠️ *WebSocket Putus*: {} — reconnect dalam {}s",
+                            e,
+                            delay.as_secs()
+                        ))
+                        .await;
                     }
                 }
             }
@@ -105,9 +112,13 @@ impl PumpfunListener {
 
     fn parse_f64(val: Option<&Value>) -> Option<f64> {
         val.and_then(|v| {
-            if v.is_number() { v.as_f64() }
-            else if v.is_string() { v.as_str()?.parse::<f64>().ok() }
-            else { None }
+            if v.is_number() {
+                v.as_f64()
+            } else if v.is_string() {
+                v.as_str()?.parse::<f64>().ok()
+            } else {
+                None
+            }
         })
     }
 
@@ -132,18 +143,21 @@ impl PumpfunListener {
 
         let v_sol = Self::parse_f64(v.get("vSolInBondingCurve"));
         let v_tokens = Self::parse_f64(v.get("vTokensInBondingCurve"));
-        
+
         // Fleksibel: Coba solAmount (pumpportal) dan sol_amount (beberapa rpc lain)
         let sol_amount = Self::parse_f64(v.get("solAmount"))
             .or_else(|| Self::parse_f64(v.get("sol_amount")))
             .unwrap_or(0.0);
 
-        let trader = v.get("traderPublicKey")
+        let trader = v
+            .get("traderPublicKey")
             .and_then(|t| t.as_str())
             .or_else(|| v.get("trader").and_then(|t| t.as_str()))
-            .unwrap_or("Unknown").to_string();
+            .unwrap_or("Unknown")
+            .to_string();
 
-        let tx_type = v.get("txType")
+        let tx_type = v
+            .get("txType")
             .and_then(|t| t.as_str())
             .or_else(|| v.get("tx_type").and_then(|t| t.as_str()))
             .unwrap_or("")
@@ -151,14 +165,18 @@ impl PumpfunListener {
 
         // Hitung harga jika data bonding curve tersedia, pastikan tidak nol
         let actual_price = if let (Some(sol), Some(tokens)) = (v_sol, v_tokens) {
-            if tokens > 1e-12 && sol > 1e-12 { sol / tokens } else { 0.0 }
+            if tokens > 1e-12 && sol > 1e-12 {
+                sol / tokens
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
 
         if (tx_type == "buy" || tx_type == "sell") && actual_price > 0.0 {
             info!("[TRADE] {} | {:.5} SOL | {}", mint, sol_amount, tx_type);
-            
+
             let _ = self.tx.send(BotEvent::PriceUpdate {
                 token_address: mint,
                 price: actual_price,
@@ -179,7 +197,7 @@ impl PumpfunListener {
                 initial_price: actual_price,
                 initial_liquidity: v_sol.unwrap_or(0.0), // Ambil dari v_sol yang sudah di-parse
             };
-            
+
             // PENTING: Kirim NewToken DULU baru PriceUpdate
             let _ = self.tx.send(BotEvent::NewToken(token_data));
 

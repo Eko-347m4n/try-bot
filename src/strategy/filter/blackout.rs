@@ -1,10 +1,10 @@
+use super::TokenFilter;
+use crate::core::events::TokenActivity;
+use crate::core::types::FilterResult;
+use crate::engine::market_context::MarketContext;
+use crate::queue::event_queue::TokenData;
 use chrono::{Timelike, Utc};
 use std::cmp;
-use crate::queue::event_queue::TokenData;
-use crate::engine::market_context::MarketContext;
-use crate::core::types::FilterResult;
-use crate::core::events::TokenActivity;
-use super::TokenFilter;
 
 pub struct BlackoutFilter {
     pub blackout_hours: Vec<u32>,
@@ -29,12 +29,8 @@ impl TokenFilter for BlackoutFilter {
         for &dead_hour in &self.blackout_hours {
             let dead_total_min = dead_hour * 60;
             // Hitung selisih menit (circular 24h)
-            let diff = if current_total_min > dead_total_min {
-                current_total_min - dead_total_min
-            } else {
-                dead_total_min - current_total_min
-            };
-            
+            let diff = current_total_min.abs_diff(dead_total_min);
+
             // Handle cross-day
             let diff = cmp::min(diff, 1440 - diff);
 

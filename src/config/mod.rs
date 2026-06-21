@@ -48,8 +48,8 @@ pub struct StrategyParameters {
     pub liquidity: LiquidityThresholds,
     pub distribution: DistributionThresholds,
     pub risk: RiskParameters,
-    pub blackout_hours: Vec<u32>,        // Jam UTC untuk skip trading
-    pub blackout_window_minutes: u32,  // Menit sebelum/sesudah blackout_hours
+    pub blackout_hours: Vec<u32>,     // Jam UTC untuk skip trading
+    pub blackout_window_minutes: u32, // Menit sebelum/sesudah blackout_hours
 }
 
 impl StrategyParameters {
@@ -79,8 +79,7 @@ impl BotConfig {
         Self {
             project_name: "pumpfun-quant-bot".to_string(),
             paper_trading: true,
-            websocket_url: std::env::var("WEBSOCKET_URL")
-                .unwrap_or_else(|_| "wss://pumpdev.io/ws".to_string()),
+            websocket_url: std::env::var("WEBSOCKET_URL").unwrap_or_else(|_| "wss://pumpdev.io/ws".to_string()),
         }
     }
 }

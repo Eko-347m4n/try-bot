@@ -4,43 +4,43 @@ mod config;
 mod core;
 mod engine;
 mod queue;
+mod state;
+mod storage;
 mod strategy;
 mod stream;
+mod telegram;
 mod tracker;
 mod utils;
 mod wallet;
-mod state;
-mod storage;
-mod telegram;
 
 use crate::config::{BotConfig, StrategyParameters};
-use crate::engine::rolling_stats::MarketSnapshot;
 use crate::engine::dynamic_config::{DynamicConfig, SharedConfig};
-use crate::stream::pumpfun_listener::PumpfunListener;
+use crate::engine::rolling_stats::MarketSnapshot;
 use crate::queue::event_queue::BotEvent;
 use crate::state::SessionState;
 use crate::storage::db;
-use crate::telegram::{TelegramNotifier, start_command_handler};
+use crate::stream::pumpfun_listener::PumpfunListener;
+use crate::telegram::{start_command_handler, TelegramNotifier};
+
+use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::Duration;
 use tracing::{info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Setup Log Rotation (File + Terminal)
     let file_appender = tracing_appender::rolling::daily("./logs", "bot.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-    
+
     let file_layer = tracing_subscriber::fmt::layer()
         .with_writer(non_blocking)
         .with_ansi(false); // Matikan warna di file agar bersih
-    
-    let stdout_layer = tracing_subscriber::fmt::layer()
-        .with_writer(std::io::stdout);
+
+    let stdout_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
     // Initialize Telegram Notifier (optional if keys not set)
     let telegram_token = std::env::var("TELOXIDE_TOKEN").unwrap_or_default();
     let chat_id = std::env::var("TELEGRAM_CHAT_ID").unwrap_or_default();
-    
+
     let notifier = if !telegram_token.is_empty() && !chat_id.is_empty() {
         let n = TelegramNotifier::new(telegram_token.clone(), chat_id);
         start_command_handler(telegram_token, shared_state.clone(), db_pool.clone()).await;
@@ -81,7 +81,11 @@ async fn main() -> Result<()> {
     if !orphans.is_empty() {
         warn!("{} posisi orphan ditemukan dari sesi sebelumnya.", orphans.len());
         if let Some(n) = &notifier {
-            n.send_generic_alert(format!("⚠️ *SESSION RECOVERY*: {} posisi orphan dari sesi sebelumnya ditandai sebagai STALE.", orphans.len())).await;
+            n.send_generic_alert(format!(
+                "⚠️ *SESSION RECOVERY*: {} posisi orphan dari sesi sebelumnya ditandai sebagai STALE.",
+                orphans.len()
+            ))
+            .await;
         }
         for orphan in orphans {
             db::insert_trade(&db_pool, &orphan).await;
@@ -95,7 +99,8 @@ async fn main() -> Result<()> {
         let s = shared_state.lock().await;
         s.market_ctx.clone()
     };
-    let shared_config: SharedConfig = Arc::new(RwLock::new(DynamicConfig::from_context(&initial_snapshot, &initial_ctx)));
+    let shared_config: SharedConfig =
+        Arc::new(RwLock::new(DynamicConfig::from_context(&initial_snapshot, &initial_ctx)));
 
     // Background Task: Update Config Setiap 1 Menit
     {
@@ -122,7 +127,8 @@ async fn main() -> Result<()> {
 
                 if new_cfg.mode != last_mode {
                     if let Some(n) = &notifier_clone {
-                        n.send_generic_alert(format!("🔄 *MODE BERUBAH*: {:?} — {}", new_cfg.mode, new_cfg.reason)).await;
+                        n.send_generic_alert(format!("🔄 *MODE BERUBAH*: {:?} — {}", new_cfg.mode, new_cfg.reason))
+                            .await;
                     }
                     last_mode = new_cfg.mode.clone();
                 }
@@ -150,8 +156,13 @@ async fn main() -> Result<()> {
                      ROI: {:.2}%\n\
                      Active Pos: {}\n\
                      Balance: {:.3} SOL",
-                    regime, s.uptime_minutes(), s.total_trades, s.win_rate() * 100.0,
-                    s.total_roi_pct(), s.active_positions, s.virtual_balance
+                    regime,
+                    s.uptime_minutes(),
+                    s.total_trades,
+                    s.win_rate() * 100.0,
+                    s.total_roi_pct(),
+                    s.active_positions,
+                    s.virtual_balance
                 );
                 n_clone.send_generic_alert(msg).await;
             }
@@ -166,7 +177,9 @@ async fn main() -> Result<()> {
             loop {
                 let now = chrono::Utc::now();
                 let next_midnight = (now + chrono::Duration::days(1))
-                    .date_naive().and_hms_opt(0, 0, 0).unwrap()
+                    .date_naive()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
                     .and_utc();
                 let wait = (next_midnight - now).to_std().unwrap_or_default();
                 tokio::time::sleep(wait).await;
@@ -178,8 +191,11 @@ async fn main() -> Result<()> {
                      Win Rate: {:.1}%\n\
                      TP: {} | SL: {}\n\
                      ROI Hari Ini: {:.2}%",
-                    summary.trades, summary.win_rate * 100.0,
-                    summary.tp, summary.sl, summary.roi
+                    summary.trades,
+                    summary.win_rate * 100.0,
+                    summary.tp,
+                    summary.sl,
+                    summary.roi
                 );
                 n_clone.send_generic_alert(msg).await;
             }
@@ -196,7 +212,50 @@ async fn main() -> Result<()> {
                 let last = s_clone.lock().await.last_ws_event;
                 if last.elapsed().as_secs() > 120 {
                     warn!("WS silence detected — {}s tanpa event.", last.elapsed().as_secs());
-                    n_clone.send_generic_alert(format!("⚠️ *WS SILENCE*: Tidak ada event >120s ({}s). Kemungkinan koneksi zombie.", last.elapsed().as_secs())).await;
+                    n_clone
+                        .send_generic_alert(format!(
+                            "⚠️ *WS SILENCE*: Tidak ada event >120s ({}s). Kemungkinan koneksi zombie.",
+                            last.elapsed().as_secs()
+                        ))
+                        .await;
+                }
+            }
+        });
+    }
+
+    // Background Task: Runtime Fee Auditor (setiap 100 trade atau ~1 jam)
+    {
+        let pool = db_pool.clone();
+        let state = shared_state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+                let s = state.lock().await;
+                let total_balance: f64 = s.strategy_statuses.iter().map(|st| st.balance).sum();
+                let initial = s.initial_balance;
+                drop(s);
+
+                let today_prefix = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                let rows: Vec<(f64, f64)> = sqlx::query_as(
+                    "SELECT COALESCE(SUM(gross_pnl_sol), 0), COALESCE(SUM(fees_paid_sol), 0)
+                     FROM trades WHERE timestamp LIKE ?1 || '%'",
+                )
+                .bind(&today_prefix)
+                .fetch_all(&pool)
+                .await
+                .unwrap_or_default();
+
+                let (gross_pnl, fees_paid) = rows.first().copied().unwrap_or((0.0, 0.0));
+                let actual_change = total_balance - initial;
+                let expected_gross = actual_change + fees_paid;
+                let hidden_fees = gross_pnl - expected_gross;
+
+                if gross_pnl != 0.0 && hidden_fees.abs() > gross_pnl.abs() * 0.05 {
+                    warn!(
+                        "FEE ANOMALY: gross={:.4} | fees_paid={:.4} | actual_change={:.4} | hidden={:.4}",
+                        gross_pnl, fees_paid, actual_change, hidden_fees
+                    );
                 }
             }
         });
@@ -206,21 +265,32 @@ async fn main() -> Result<()> {
     let (listener_tx, listener_rx) = mpsc::unbounded_channel();
 
     let (trace_tx, trace_rx) = mpsc::channel(10000);
-    
+
     // Setup Async Batch Worker untuk SQLite Trace Logging
     let batch_worker = crate::storage::batch_worker::BatchWorker::new(db_pool.clone(), trace_rx);
     let db_worker_handle = tokio::spawn(async move {
         batch_worker.run().await;
     });
 
+    let raw_strategies = crate::strategy::builder::StrategyBuilder::build_all(notifier.clone());
+    for s in &raw_strategies {
+        info!(
+            "[{}] CONFIG | broker=[{}] | exit=[TP={}, SL={}] | wallet={:.3} SOL",
+            s.strategy_id,
+            s.broker.describe(),
+            s.exit.get_tp_sl().0,
+            s.exit.get_tp_sl().1,
+            s.wallet.balance
+        );
+    }
     let mut dispatcher = crate::engine::dispatcher::Dispatcher::new(
-        crate::strategy::builder::StrategyBuilder::build_all(notifier.clone())
+        raw_strategies
             .into_iter()
             .map(|s| Box::new(s) as Box<dyn crate::strategy::instance::Strategy>)
             .collect(),
         trace_tx,
         tx.clone(),
-        strategy_params
+        strategy_params,
     );
 
     let listener = PumpfunListener::new(bot_config.websocket_url, tx.clone(), notifier.clone());
@@ -229,7 +299,7 @@ async fn main() -> Result<()> {
     });
 
     info!("Bot aktif. Menunggu event...");
-    
+
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -250,7 +320,7 @@ async fn main() -> Result<()> {
 
                 let is_session_end = matches!(event, BotEvent::SessionEnd);
                 dispatcher.process_event(event);
-                
+
                 // Update shared state with latest strategy statuses
                 {
                     let mut s = shared_state.lock().await;

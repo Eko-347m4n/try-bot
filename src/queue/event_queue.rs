@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,8 +46,8 @@ pub enum BotEvent {
     },
     SellSignal(String),
     Unsubscribe(String), // Tambahan: Untuk melepas langganan WebSocket
-    Heartbeat, // Tambahan: Untuk menandakan koneksi WS masih hidup
-    SessionEnd, // Event untuk menutup sesi dan menghitung ROI
+    Heartbeat,           // Tambahan: Untuk menandakan koneksi WS masih hidup
+    SessionEnd,          // Event untuk menutup sesi dan menghitung ROI
 }
 
 #[allow(dead_code)]
@@ -58,8 +58,6 @@ pub struct EventQueue {
 impl EventQueue {
     #[allow(dead_code)]
     pub fn new() -> Self {
-        Self {
-            id: Uuid::new_v4(),
-        }
+        Self { id: Uuid::new_v4() }
     }
 }

@@ -1,0 +1,2 @@
+[advisories]
+ignore = ["RUSTSEC-2023-0071"]  # rsa Marvin Attack — transitive dep, not used on our platform

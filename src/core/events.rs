@@ -5,7 +5,7 @@ pub struct TokenActivity {
     pub sell_volume: f64,
     pub half_volume: Option<f64>, // Snapshot pertengahan
     pub latest_price: f64,
-    pub unique_buyers: usize,     // Simpan sebagai count aja biar gampang dikirim
+    pub unique_buyers: usize, // Simpan sebagai count aja biar gampang dikirim
 }
 
 impl Default for TokenActivity {

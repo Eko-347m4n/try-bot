@@ -1,8 +1,8 @@
-use crate::queue::event_queue::TokenData;
-use crate::engine::market_context::MarketContext;
-use crate::core::types::FilterResult;
-use crate::core::events::TokenActivity;
 use super::TokenFilter;
+use crate::core::events::TokenActivity;
+use crate::core::types::FilterResult;
+use crate::engine::market_context::MarketContext;
+use crate::queue::event_queue::TokenData;
 
 pub struct SpikeFilter {
     pub max_multiplier: f64,
@@ -21,13 +21,13 @@ impl TokenFilter for SpikeFilter {
         if global_velocity > 0.5 && velocity > self.max_multiplier * global_velocity {
             FilterResult {
                 passed: false,
-                reason: format!("Spike: {:.2} > {:.1}x Global ({:.2})", velocity, self.max_multiplier, global_velocity),
+                reason: format!(
+                    "Spike: {:.2} > {:.1}x Global ({:.2})",
+                    velocity, self.max_multiplier, global_velocity
+                ),
             }
         } else {
-            FilterResult {
-                passed: true,
-                reason: "OK".to_string(),
-            }
+            FilterResult { passed: true, reason: "OK".to_string() }
         }
     }
 }
